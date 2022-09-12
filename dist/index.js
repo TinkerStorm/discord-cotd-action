@@ -59,7 +59,6 @@ const request_handler_1 = __importDefault(__nccwpck_require__(3734));
 // * has permissions for MANAGE_ROLES for the guild (not a channel overwrite)
 // * is higher on the role list than the target role {b.position - a.position}
 // > MUST be higher, not below and certainly not the highest role they have
-const randomHexInt = () => Math.floor(Math.random() * 16777215);
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -88,7 +87,7 @@ function run() {
                 .first();
             if (guild.owner || (highestRole && highestRole.position <= target.position))
                 throw new Error('User does not have permission to manage this role.');
-            const colorCode = randomHexInt();
+            const colorCode = (0, util_1.randomHexInt)();
             const colorHex = colorCode.toString(16);
             const colorDataRes = yield (0, node_fetch_1.default)(`https://www.thecolorapi.com/id?hex=${colorHex}`);
             const colorData = (yield colorDataRes.json());
@@ -149,13 +148,10 @@ class RequestHandler {
             const path = `${(_a = options.method) !== null && _a !== void 0 ? _a : 'GET'} ${url}`;
             (0, core_1.debug)(`Requesting for ${path}`);
             const timer = (0, util_1.wrapDuration)();
-            const res = yield (0, node_fetch_1.default)(url, Object.assign(Object.assign({}, options), { headers: {
-                    Authorization: `Bot ${this.token}`
-                    // Must always have auth header
-                } }));
+            const res = yield (0, node_fetch_1.default)(v10_1.RouteBases.api + url, Object.assign(Object.assign({}, options), { headers: Object.assign(Object.assign({}, options.headers), { 'Content-Type': 'application/json', Authorization: `Bot ${this.token}` }) }));
             (0, core_1.debug)(`Request for ${path} took ${timer()}`);
             const data = (yield res.json());
-            if ('code' in data || 'message' in data)
+            if ('message' in data)
                 throw new Error(data.message);
             // Failover is necessary for handler to fallback on for 4** and 5** error codes
             return data;
@@ -223,7 +219,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.wrapDuration = exports.getDuration = exports.hasPermissionFor = exports.resolvePermissionsOf = void 0;
+exports.randomHexInt = exports.wrapDuration = exports.getDuration = exports.hasPermissionFor = exports.resolvePermissionsOf = void 0;
 const ms_1 = __importDefault(__nccwpck_require__(2846));
 const resolvePermissionsOf = (roles) => roles.reduce((acc, role) => acc | Number(role.permissions), 0);
 exports.resolvePermissionsOf = resolvePermissionsOf;
@@ -242,6 +238,8 @@ function wrapDuration() {
     };
 }
 exports.wrapDuration = wrapDuration;
+const randomHexInt = () => Math.floor(Math.random() * 0xffffff);
+exports.randomHexInt = randomHexInt;
 
 
 /***/ }),
