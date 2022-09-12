@@ -1,105 +1,73 @@
-<p align="center">
-  <a href="https://github.com/actions/typescript-action/actions"><img alt="typescript-action status" src="https://github.com/actions/typescript-action/workflows/build-test/badge.svg"></a>
-</p>
+# discord-cotd-action
 
-# Create a JavaScript Action using TypeScript
+An action to randomize the color of a role in Discord each time it is called upon.
 
-Use this template to bootstrap the creation of a TypeScript action.:rocket:
-
-This template includes compilation support, tests, a validation workflow, publishing, and versioning guidance.  
-
-If you are new, there's also a simpler introduction.  See the [Hello World JavaScript Action](https://github.com/actions/hello-world-javascript-action)
-
-## Create an action from this template
-
-Click the `Use this Template` and provide the new repo details for your action
-
-## Code in Main
-
-> First, you'll need to have a reasonably modern version of `node` handy. This won't work with versions older than 9, for instance.
-
-Install the dependencies  
-```bash
-$ npm install
-```
-
-Build the typescript and package it for distribution
-```bash
-$ npm run build && npm run package
-```
-
-Run the tests :heavy_check_mark:  
-```bash
-$ npm test
-
- PASS  ./index.test.js
-  ✓ throws invalid number (3ms)
-  ✓ wait 500 ms (504ms)
-  ✓ test runs (95ms)
-
-...
-```
-
-## Change action.yml
-
-The action.yml defines the inputs and output for your action.
-
-Update the action.yml with your name, description, inputs and outputs for your action.
-
-See the [documentation](https://help.github.com/en/articles/metadata-syntax-for-github-actions)
-
-## Change the Code
-
-Most toolkit and CI/CD operations involve async operations so the action is run in an async function.
-
-```javascript
-import * as core from '@actions/core';
-...
-
-async function run() {
-  try { 
-      ...
-  } 
-  catch (error) {
-    core.setFailed(error.message);
-  }
-}
-
-run()
-```
-
-See the [toolkit documentation](https://github.com/actions/toolkit/blob/master/README.md#packages) for the various packages.
-
-## Publish to a distribution branch
-
-Actions are run from GitHub repos so we will checkin the packed dist folder. 
-
-Then run [ncc](https://github.com/zeit/ncc) and push the results:
-```bash
-$ npm run package
-$ git add dist
-$ git commit -a -m "prod dependencies"
-$ git push origin releases/v1
-```
-
-Note: We recommend using the `--license` option for ncc, which will create a license file for all of the production node modules used in your project.
-
-Your action is now published! :rocket: 
-
-See the [versioning documentation](https://github.com/actions/toolkit/blob/master/docs/action-versioning.md)
-
-## Validate
-
-You can now validate the action by referencing `./` in a workflow in your repo (see [test.yml](.github/workflows/test.yml))
+## Usage
 
 ```yaml
-uses: ./
-with:
-  milliseconds: 1000
+- name: Randomize color of role
+  uses: TinkerStorm/discord-cotd-action@main
+  with:
+    app-token: ${{ secrets.DISCORD_TOKEN }}
+    guild-id: "123456789012345678"
+    role-id: "123456789012345678"
+    # role-format: "COTD - &s"
 ```
 
-See the [actions tab](https://github.com/actions/typescript-action/actions) for runs of this action! :rocket:
+## Inputs (`with.*`)
 
-## Usage:
+**All arguments are required unless otherwise specified.**
 
-After testing you can [create a v1 tag](https://github.com/actions/toolkit/blob/master/docs/action-versioning.md) to reference the stable and latest V1 action
+> **Warning**  
+> The application (`app-token`) **must** have...
+> - membership for the specified guild (`guild-id`)
+> - `MANAGE_ROLES` permission
+> - a role higher than the specified (`role-id`)
+
+### `app-token`
+
+The Discord application token. This can be found in the [Discord developer portal (discord.com)](https://discord.com/developer/applications/).
+
+> **Warning**  
+> The token should be [stored as a secret (docs.github.com)](https://docs.github.com/en/actions/security-guides/encrypted-secrets) in your repository. Posting it publicly is a security risk, and Discord [will reset it (docs.github.com)](https://docs.github.com/en/code-security/secret-scanning/secret-scanning-patterns#supported-secrets-for-partner-patterns:~:text=Discord-,Discord%20Bot%20Token) if committed to a public repository.
+
+### `guild-id`
+
+The ID of the guild to change the role color in.
+
+### `role-id`
+
+The ID of the role to randomize the color of. This can be found by right-clicking the role in Discord and selecting "Copy ID".
+
+### `role-format`
+
+*This input is optional.*
+
+The format of the role name. The following variables are available:
+
+- `&s` - The color name
+- `&h` - The color hex code
+
+## Outputs
+
+### `color-int`
+
+The integer representation of the color that was set.
+
+### `color-hex`
+
+The hexadecimal representation of the color that was set.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+## Future
+
+- [ ] Implement a test suite for the action itself, and the functions that it uses.
+   > It was originally removed due to the complexity of requiring a request mock, and the lack of documentation on how to do so. I may be able to implement it in the future, but for now, it is not a priority.
+- [ ] Implement a way to set a color according to a provided argument (-> `with.color-wheel: #7289DA,...`).
+   > Default to first element, if current color is not in provided list.
+- [ ] Implement a way to adjust for web safe colors (-> `with.use-web-safe-colors: boolean`).
+  - [Avoiding color blindness penalty (stackoverflow#34569332)](https://stackoverflow.com/a/34569332)
+  - [Using JavaScript to Adjust Saturation and Brightness (css-tricks.com)](https://css-tricks.com/using-javascript-to-adjust-saturation-and-brightness-of-rgb-colors/)

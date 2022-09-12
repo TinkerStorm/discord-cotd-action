@@ -1,3 +1,8 @@
+import { Collection } from '@discordjs/collection';
+import { APIRole } from 'discord-api-types/v10';
+
+export type RoleCollection = Collection<string, APIRole>;
+
 export interface ColorStruct {
   hex: HexData;
   rgb: RGBData;

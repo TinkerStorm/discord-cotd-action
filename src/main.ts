@@ -1,15 +1,10 @@
 import * as core from '@actions/core';
-import {
-  APIUser,
-  APIGuild,
-  APIGuildMember,
-  Routes,
-  APIRole,
-  RESTPostAPIGuildRoleJSONBody
-} from 'discord-api-types/v10';
-import {MANAGE_ROLES, OPTIONS} from './constants';
-import {ColorStruct} from './types';
-import {hasPermission as hasPermissionFor, resolvePermissionsOf} from './util';
+import { Collection } from '@discordjs/collection';
+
+import { MANAGE_ROLES, OPTIONS } from './constants';
+import { ColorStruct, RoleCollection } from './types';
+import { hasPermissionFor, resolvePermissionsOf, wrapDuration } from './util';
+import RequestHandler from './request-handler';
 
 // Check if Token User...
 // * has valid access
@@ -23,58 +18,43 @@ import {hasPermission as hasPermissionFor, resolvePermissionsOf} from './util';
 // * is higher on the role list than the target role {b.position - a.position}
 // > MUST be higher, not below and certainly not the highest role they have
 
-const makeRequest = async <T>(uri: string, token: string): Promise<T> => {
-  const res = await fetch(uri, {
-    headers: {
-      Authorization: `Bot ${token}`
-    }
-  });
-  return res.json();
-};
-
 const randomHexInt = (): number => Math.floor(Math.random() * 16777215);
 
 async function run(): Promise<void> {
   try {
-    const {appToken, guildID, roleID, roleFormat} = OPTIONS;
+    const { appToken, guildID, roleID, roleFormat } = OPTIONS;
+    const timer = wrapDuration();
 
-    const user: APIUser = await makeRequest(Routes.user(), appToken);
-    if (!user) throw new Error('User not found.');
+    const handler = new RequestHandler(appToken);
 
-    const guild: APIGuild = await makeRequest(Routes.guild(guildID), appToken);
-    if (!guild) throw new Error('Guild not found / User not authenticated.');
+    // Can only throw exceptions, user is guaranteed to exist if token is valid
+    const user = await handler.getUser();
+
+    const guild = await handler.getGuild(guildID);
+
     if (!guild.roles.length) throw new Error('No roles found.');
-    if (!guild.roles.map(r => r.id).includes(roleID))
-      throw new Error('Role not found.');
 
-    const member: APIGuildMember = await makeRequest(
-      Routes.guildMember(guildID, user.id),
-      appToken
+    const roles: RoleCollection = new Collection(
+      guild.roles.map(r => [r.id, r])
     );
 
-    if (!member) throw new Error('Member not found / User not authenticated.');
+    const target = roles.get(roleID);
 
-    const permissions = resolvePermissionsOf(member, guild.roles);
+    if (!target) throw new Error('Role not found.');
+
+    const member = await handler.getMember(guildID, user.id);
+    // No failover necessary, guild was found and user is authenticated
+
+    const userRoles = roles.filter(r => member.roles.includes(r.id));
+    const permissions = resolvePermissionsOf(userRoles);
     if (!hasPermissionFor(MANAGE_ROLES, permissions))
       throw new Error('User does not have permission to manage roles.');
 
-    const mappedRoles: Record<string, APIRole> = {};
-    for (const role of guild.roles) {
-      mappedRoles[role.id] = role;
-    }
+    const highestRole = userRoles
+      .sort((a, b) => b.position - a.position)
+      .first();
 
-    const mappedUserRoles: Record<string, APIRole> = {};
-    for (const memberRoleID of member.roles) {
-      mappedUserRoles[memberRoleID] = mappedRoles[memberRoleID];
-    }
-
-    const targetRole = mappedRoles[roleID];
-    if (
-      guild.owner_id !== user.id &&
-      Object.values(mappedUserRoles).some(
-        r => r.position <= targetRole.position
-      )
-    )
+    if (guild.owner || (highestRole && highestRole.position <= target.position))
       throw new Error('User does not have permission to manage this role.');
 
     const colorCode = randomHexInt();
@@ -85,26 +65,24 @@ async function run(): Promise<void> {
     );
     const colorData: ColorStruct = await colorDataRes.json();
 
-    const newRoleData: RESTPostAPIGuildRoleJSONBody = {
+    const newRole = await handler.modifyRole(guildID, roleID, {
       color: colorCode,
       name: roleFormat
         .replace('&s', colorData.name.value)
         .replace('&h', colorData.hex.clean)
-    };
-
-    const newRoleRes = await fetch(Routes.guildRole(guildID, roleID), {
-      body: JSON.stringify(newRoleData),
-      headers: {
-        Authorization: `Bot ${appToken}`
-      }
     });
-    const newRole: APIRole = await newRoleRes.json();
+    const duration = timer();
+
+    core.info(`Role ${newRole.name} has been updated.`);
+    core.info(`Old data: ${target.name} | ${target.color}`);
+    core.info(`New data: ${newRole.name} | ${newRole.color}`);
+
+    core.info(`Took ${duration} to complete.`);
 
     core.setOutput('color-int', newRole.color);
     core.setOutput('color-hex', newRole.color.toString(16));
   } catch (error) {
     if (error instanceof Error) core.setFailed(error.message);
-    if (typeof error === 'string') core.setFailed(error);
   }
 }
 

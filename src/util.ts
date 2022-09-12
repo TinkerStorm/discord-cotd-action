@@ -1,19 +1,21 @@
-import {APIGuildMember, APIRole} from 'discord-api-types/v10';
+import ms from 'ms';
+import { RoleCollection } from './types';
 
-export function resolvePermissionsOf(
-  member: APIGuildMember,
-  roles: APIRole[]
-): number {
-  const {roles: memberRoles} = member;
-  let permissions = 0;
-  for (const roleID of memberRoles) {
-    const role = roles.find(({id}) => id === roleID);
-    if (role) permissions |= Number(role.permissions);
-  }
-  return permissions;
+export const resolvePermissionsOf = (roles: RoleCollection): number =>
+  roles.reduce((acc, role) => acc | Number(role.permissions), 0);
+
+export const hasPermissionFor = (flag: number, permissions: number): boolean =>
+  (permissions & flag) === flag;
+
+export function getDuration(start: number): string {
+  const duration = performance.now() - start;
+  return `${duration.toFixed(2)}ms`;
 }
 
-export function hasPermission(flag: number, permissions: number): boolean {
-  flag = Number(flag);
-  return (permissions & flag) === flag;
+export function wrapDuration(): () => string {
+  const start = performance.now();
+  return () => {
+    const end = performance.now();
+    return ms(end - start);
+  };
 }

@@ -1,17 +1,17 @@
 {
-  "name": "typescript-action",
-  "version": "0.0.0",
+  "name": "discord-cotd-action",
+  "version": "0.0.1",
   "private": true,
-  "description": "TypeScript template action",
+  "description": "A GitHub Action to modify a role on a Discord guild.",
   "main": "lib/main.js",
   "scripts": {
     "build": "tsc",
-    "format": "prettier --write '**/*.ts'",
-    "format-check": "prettier --check '**/*.ts'",
+    "format": "prettier --write **/*.ts",
+    "format-check": "prettier --check **/*.ts",
     "lint": "eslint src/**/*.ts",
-    "package": "ncc build --source-map --license licenses.txt",
+    "package": "ncc build",
     "test": "jest",
-    "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
+    "all": "npm run build && npm run format && npm run lint"
   },
   "repository": {
     "type": "git",
@@ -25,7 +25,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@actions/core": "^1.9.1"
+    "@actions/core": "^1.9.1",
+    "@discordjs/collection": "^1.1.0",
+    "ms": "^3.0.0-beta.2"
   },
   "devDependencies": {
     "@types/node": "^18.7.16",

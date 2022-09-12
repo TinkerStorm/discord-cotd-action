@@ -1,11 +1,28 @@
-name: 'Your name here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
+name: Discord - Color of the Day
+description: 'Set the color of the day for a role in a Discord server.'
+author: TinkerStorm
 inputs:
-  milliseconds: # change this
+  app-token:
+    description: 'The token for your Discord application'
     required: true
-    description: 'input description here'
-    default: 'default value if applicable'
+  guild-id:
+    description: 'The ID of the guild to manage'
+    required: true
+  role-id:
+    description: 'The ID of the role to manage'
+    required: true
+  role-format:
+    description: 'The format of the role name'
+    required: false
+    default: 'COTD - &s'
+outputs:
+  color-int:
+    description: 'The color of the day as an integer'
+  color-hex:
+    description: 'The color of the day as a hex string'
+branding:
+  color: blue
+  icon: sunrise
 runs:
   using: 'node16'
   main: 'dist/index.js'
