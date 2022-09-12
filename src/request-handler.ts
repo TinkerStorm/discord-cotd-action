@@ -1,4 +1,3 @@
-/* global RequestInit */
 import { debug } from '@actions/core';
 import {
   RESTGetAPICurrentUserResult,
@@ -8,28 +7,31 @@ import {
   RESTPostAPIGuildRoleResult,
   Routes
 } from 'discord-api-types/v10';
+import got, { OptionsOfJSONResponseBody } from 'got';
 import { wrapDuration } from './util';
 
 export default class RequestHandler {
   constructor(private token: string) {}
 
-  private async request<T>(url: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(
+    url: string,
+    options: OptionsOfJSONResponseBody = {}
+  ): Promise<T> {
     const path = `${options.method ?? 'GET'} ${url}`;
 
     debug(`Requesting for ${path}`);
     const timer = wrapDuration();
-    const res = await fetch(url, {
+    const data = await got(url, {
       ...options,
       headers: {
         ...options.headers,
         'Content-Type': 'application/json',
         Authorization: `Bot ${this.token}`
         // Must always have auth header
-      }
-    });
+      },
+      throwHttpErrors: true
+    }).json<T>();
     debug(`Request for ${path} took ${timer()}`);
-    const data = await res.json();
-    if (data.code || data.message) throw new Error(data);
     // Failover is necessary for handler to fallback on for 4** and 5** error codes
 
     return data;
@@ -81,7 +83,7 @@ export default class RequestHandler {
   ): Promise<RESTPostAPIGuildRoleResult> {
     return this.request(Routes.guildRole(guildID, roleID), {
       method: 'PATCH',
-      body: JSON.stringify(options)
+      json: options
     });
   }
 }
