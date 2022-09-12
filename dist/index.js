@@ -220,7 +220,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.randomHexInt = exports.wrapDuration = exports.getDuration = exports.hasPermissionFor = exports.resolvePermissionsOf = void 0;
-const ms_1 = __importDefault(__nccwpck_require__(2846));
+const ms_1 = __importDefault(__nccwpck_require__(7026));
 const resolvePermissionsOf = (roles) => roles.reduce((acc, role) => acc | Number(role.permissions), 0);
 exports.resolvePermissionsOf = resolvePermissionsOf;
 const hasPermissionFor = (flag, permissions) => (permissions & flag) === flag;
@@ -4035,13 +4035,15 @@ var UserPremiumType;
 var ConnectionService;
 (function (ConnectionService) {
     ConnectionService["BattleNet"] = "battlenet";
+    ConnectionService["eBay"] = "ebay";
     ConnectionService["EpicGames"] = "epicgames";
     ConnectionService["Facebook"] = "facebook";
     ConnectionService["GitHub"] = "github";
     ConnectionService["LeagueOfLegends"] = "leagueoflegends";
+    ConnectionService["PayPal"] = "paypal";
     ConnectionService["PlayStationNetwork"] = "playstation";
     ConnectionService["Reddit"] = "reddit";
-    ConnectionService["SamsungGalaxy"] = "samsunggalaxy";
+    ConnectionService["RiotGames"] = "riotgames";
     ConnectionService["Spotify"] = "spotify";
     ConnectionService["Skype"] = "skype";
     ConnectionService["Steam"] = "steam";
@@ -11426,7 +11428,7 @@ try {
 
 /***/ }),
 
-/***/ 2846:
+/***/ 7026:
 /***/ ((module, exports) => {
 
 "use strict";
