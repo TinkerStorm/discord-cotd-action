@@ -1,4 +1,3 @@
-/* global RequestInit */
 import { debug } from '@actions/core';
 import {
   RESTGetAPICurrentUserResult,
@@ -8,6 +7,8 @@ import {
   RESTPostAPIGuildRoleResult,
   Routes
 } from 'discord-api-types/v10';
+import fetch, { type RequestInit } from 'node-fetch';
+
 import { wrapDuration } from './util';
 
 export default class RequestHandler {
@@ -28,8 +29,8 @@ export default class RequestHandler {
       }
     });
     debug(`Request for ${path} took ${timer()}`);
-    const data = await res.json();
-    if (data.code || data.message) throw new Error(data);
+    const data = (await res.json()) as T | { message: string };
+    if ('message' in data) throw new Error(data.message);
     // Failover is necessary for handler to fallback on for 4** and 5** error codes
 
     return data;

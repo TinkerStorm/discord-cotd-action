@@ -19,3 +19,5 @@ export function wrapDuration(): () => string {
     return ms(end - start);
   };
 }
+
+export const randomHexInt = (): number => Math.floor(Math.random() * 0xffffff);

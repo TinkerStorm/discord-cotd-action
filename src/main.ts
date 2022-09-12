@@ -1,9 +1,15 @@
-import * as core from '@actions/core';
+import { info, setOutput, setFailed } from '@actions/core';
 import { Collection } from '@discordjs/collection';
+import fetch from 'node-fetch';
 
 import { MANAGE_ROLES, OPTIONS } from './constants';
 import { ColorStruct, RoleCollection } from './types';
-import { hasPermissionFor, resolvePermissionsOf, wrapDuration } from './util';
+import {
+  hasPermissionFor,
+  randomHexInt,
+  resolvePermissionsOf,
+  wrapDuration
+} from './util';
 import RequestHandler from './request-handler';
 
 // Check if Token User...
@@ -18,8 +24,6 @@ import RequestHandler from './request-handler';
 // * is higher on the role list than the target role {b.position - a.position}
 // > MUST be higher, not below and certainly not the highest role they have
 
-const randomHexInt = (): number => Math.floor(Math.random() * 16777215);
-
 async function run(): Promise<void> {
   try {
     const { appToken, guildID, roleID, roleFormat } = OPTIONS;
@@ -29,6 +33,8 @@ async function run(): Promise<void> {
 
     // Can only throw exceptions, user is guaranteed to exist if token is valid
     const user = await handler.getUser();
+
+    if (!user.bot) throw new Error('Authenticated user is not a bot');
 
     const guild = await handler.getGuild(guildID);
 
@@ -63,7 +69,7 @@ async function run(): Promise<void> {
     const colorDataRes = await fetch(
       `https://www.thecolorapi.com/id?hex=${colorHex}`
     );
-    const colorData: ColorStruct = await colorDataRes.json();
+    const colorData: ColorStruct = (await colorDataRes.json()) as ColorStruct;
 
     const newRole = await handler.modifyRole(guildID, roleID, {
       color: colorCode,
@@ -73,16 +79,16 @@ async function run(): Promise<void> {
     });
     const duration = timer();
 
-    core.info(`Role ${newRole.name} has been updated.`);
-    core.info(`Old data: ${target.name} | ${target.color}`);
-    core.info(`New data: ${newRole.name} | ${newRole.color}`);
+    info(`Role ${newRole.name} has been updated.`);
+    info(`Old data: ${target.name} | ${target.color}`);
+    info(`New data: ${newRole.name} | ${newRole.color}`);
 
-    core.info(`Took ${duration} to complete.`);
+    info(`Took ${duration} to complete.`);
 
-    core.setOutput('color-int', newRole.color);
-    core.setOutput('color-hex', newRole.color.toString(16));
+    setOutput('color-int', newRole.color);
+    setOutput('color-hex', newRole.color.toString(16));
   } catch (error) {
-    if (error instanceof Error) core.setFailed(error.message);
+    if (error instanceof Error) setFailed(error.message);
   }
 }
 
