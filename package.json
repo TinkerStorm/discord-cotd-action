@@ -1,6 +1,6 @@
 {
   "name": "discord-cotd-action",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "description": "A GitHub Action to modify a role on a Discord guild.",
   "main": "lib/main.js",
