@@ -30,6 +30,8 @@ async function run(): Promise<void> {
     // Can only throw exceptions, user is guaranteed to exist if token is valid
     const user = await handler.getUser();
 
+    if (!user.bot) throw new Error('Authenticated user is not a bot');
+
     const guild = await handler.getGuild(guildID);
 
     if (!guild.roles.length) throw new Error('No roles found.');
