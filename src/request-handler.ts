@@ -5,7 +5,8 @@ import {
   RESTGetAPIGuildResult,
   RESTPostAPIGuildRoleJSONBody,
   RESTPostAPIGuildRoleResult,
-  Routes
+  Routes,
+  RouteBases
 } from 'discord-api-types/v10';
 import fetch, { type RequestInit } from 'node-fetch';
 
@@ -19,7 +20,7 @@ export default class RequestHandler {
 
     debug(`Requesting for ${path}`);
     const timer = wrapDuration();
-    const res = await fetch(url, {
+    const res = await fetch(RouteBases.api + url, {
       ...options,
       headers: {
         ...options.headers,
