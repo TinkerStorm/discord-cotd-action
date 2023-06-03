@@ -43,7 +43,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core_1 = __nccwpck_require__(2186);
-const collection_1 = __nccwpck_require__(4277);
+const collection_1 = __nccwpck_require__(8861);
 const node_fetch_1 = __importDefault(__nccwpck_require__(4429));
 const constants_1 = __nccwpck_require__(5105);
 const util_1 = __nccwpck_require__(4024);
@@ -88,7 +88,7 @@ function run() {
             if (guild.owner || (highestRole && highestRole.position <= target.position))
                 throw new Error('User does not have permission to manage this role.');
             const colorCode = (0, util_1.randomHexInt)();
-            const colorHex = colorCode.toString(16);
+            const colorHex = colorCode.toString(16).padStart(6, '0');
             const colorDataRes = yield (0, node_fetch_1.default)(`https://www.thecolorapi.com/id?hex=${colorHex}`);
             const colorData = (yield colorDataRes.json());
             const newRole = yield handler.modifyRole(guildID, roleID, {
@@ -383,7 +383,6 @@ const file_command_1 = __nccwpck_require__(717);
 const utils_1 = __nccwpck_require__(5278);
 const os = __importStar(__nccwpck_require__(2037));
 const path = __importStar(__nccwpck_require__(1017));
-const uuid_1 = __nccwpck_require__(5840);
 const oidc_utils_1 = __nccwpck_require__(8041);
 /**
  * The code to exit an action
@@ -413,20 +412,9 @@ function exportVariable(name, val) {
     process.env[name] = convertedVal;
     const filePath = process.env['GITHUB_ENV'] || '';
     if (filePath) {
-        const delimiter = `ghadelimiter_${uuid_1.v4()}`;
-        // These should realistically never happen, but just in case someone finds a way to exploit uuid generation let's not allow keys or values that contain the delimiter.
-        if (name.includes(delimiter)) {
-            throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
-        }
-        if (convertedVal.includes(delimiter)) {
-            throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
-        }
-        const commandValue = `${name}<<${delimiter}${os.EOL}${convertedVal}${os.EOL}${delimiter}`;
-        file_command_1.issueCommand('ENV', commandValue);
+        return file_command_1.issueFileCommand('ENV', file_command_1.prepareKeyValueMessage(name, val));
     }
-    else {
-        command_1.issueCommand('set-env', { name }, convertedVal);
-    }
+    command_1.issueCommand('set-env', { name }, convertedVal);
 }
 exports.exportVariable = exportVariable;
 /**
@@ -444,7 +432,7 @@ exports.setSecret = setSecret;
 function addPath(inputPath) {
     const filePath = process.env['GITHUB_PATH'] || '';
     if (filePath) {
-        file_command_1.issueCommand('PATH', inputPath);
+        file_command_1.issueFileCommand('PATH', inputPath);
     }
     else {
         command_1.issueCommand('add-path', {}, inputPath);
@@ -484,7 +472,10 @@ function getMultilineInput(name, options) {
     const inputs = getInput(name, options)
         .split('\n')
         .filter(x => x !== '');
-    return inputs;
+    if (options && options.trimWhitespace === false) {
+        return inputs;
+    }
+    return inputs.map(input => input.trim());
 }
 exports.getMultilineInput = getMultilineInput;
 /**
@@ -517,8 +508,12 @@ exports.getBooleanInput = getBooleanInput;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setOutput(name, value) {
+    const filePath = process.env['GITHUB_OUTPUT'] || '';
+    if (filePath) {
+        return file_command_1.issueFileCommand('OUTPUT', file_command_1.prepareKeyValueMessage(name, value));
+    }
     process.stdout.write(os.EOL);
-    command_1.issueCommand('set-output', { name }, value);
+    command_1.issueCommand('set-output', { name }, utils_1.toCommandValue(value));
 }
 exports.setOutput = setOutput;
 /**
@@ -647,7 +642,11 @@ exports.group = group;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function saveState(name, value) {
-    command_1.issueCommand('save-state', { name }, value);
+    const filePath = process.env['GITHUB_STATE'] || '';
+    if (filePath) {
+        return file_command_1.issueFileCommand('STATE', file_command_1.prepareKeyValueMessage(name, value));
+    }
+    command_1.issueCommand('save-state', { name }, utils_1.toCommandValue(value));
 }
 exports.saveState = saveState;
 /**
@@ -713,13 +712,14 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.issueCommand = void 0;
+exports.prepareKeyValueMessage = exports.issueFileCommand = void 0;
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const fs = __importStar(__nccwpck_require__(7147));
 const os = __importStar(__nccwpck_require__(2037));
+const uuid_1 = __nccwpck_require__(5840);
 const utils_1 = __nccwpck_require__(5278);
-function issueCommand(command, message) {
+function issueFileCommand(command, message) {
     const filePath = process.env[`GITHUB_${command}`];
     if (!filePath) {
         throw new Error(`Unable to find environment variable for file command ${command}`);
@@ -731,7 +731,22 @@ function issueCommand(command, message) {
         encoding: 'utf8'
     });
 }
-exports.issueCommand = issueCommand;
+exports.issueFileCommand = issueFileCommand;
+function prepareKeyValueMessage(key, value) {
+    const delimiter = `ghadelimiter_${uuid_1.v4()}`;
+    const convertedValue = utils_1.toCommandValue(value);
+    // These should realistically never happen, but just in case someone finds a
+    // way to exploit uuid generation let's not allow keys or values that contain
+    // the delimiter.
+    if (key.includes(delimiter)) {
+        throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
+    }
+    if (convertedValue.includes(delimiter)) {
+        throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
+    }
+    return `${key}<<${delimiter}${os.EOL}${convertedValue}${os.EOL}${delimiter}`;
+}
+exports.prepareKeyValueMessage = prepareKeyValueMessage;
 //# sourceMappingURL=file-command.js.map
 
 /***/ }),
@@ -1990,6 +2005,558 @@ exports.checkBypass = checkBypass;
 
 /***/ }),
 
+/***/ 8861:
+/***/ ((module) => {
+
+"use strict";
+
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// src/index.ts
+var src_exports = {};
+__export(src_exports, {
+  Collection: () => Collection,
+  version: () => version
+});
+module.exports = __toCommonJS(src_exports);
+
+// src/collection.ts
+var Collection = class extends Map {
+  /**
+   * Obtains the value of the given key if it exists, otherwise sets and returns the value provided by the default value generator.
+   *
+   * @param key - The key to get if it exists, or set otherwise
+   * @param defaultValueGenerator - A function that generates the default value
+   * @example
+   * ```ts
+   * collection.ensure(guildId, () => defaultGuildConfig);
+   * ```
+   */
+  ensure(key, defaultValueGenerator) {
+    if (this.has(key))
+      return this.get(key);
+    if (typeof defaultValueGenerator !== "function")
+      throw new TypeError(`${defaultValueGenerator} is not a function`);
+    const defaultValue = defaultValueGenerator(key, this);
+    this.set(key, defaultValue);
+    return defaultValue;
+  }
+  /**
+   * Checks if all of the elements exist in the collection.
+   *
+   * @param keys - The keys of the elements to check for
+   * @returns `true` if all of the elements exist, `false` if at least one does not exist.
+   */
+  hasAll(...keys) {
+    return keys.every((key) => super.has(key));
+  }
+  /**
+   * Checks if any of the elements exist in the collection.
+   *
+   * @param keys - The keys of the elements to check for
+   * @returns `true` if any of the elements exist, `false` if none exist.
+   */
+  hasAny(...keys) {
+    return keys.some((key) => super.has(key));
+  }
+  first(amount) {
+    if (amount === void 0)
+      return this.values().next().value;
+    if (amount < 0)
+      return this.last(amount * -1);
+    amount = Math.min(this.size, amount);
+    const iter = this.values();
+    return Array.from({ length: amount }, () => iter.next().value);
+  }
+  firstKey(amount) {
+    if (amount === void 0)
+      return this.keys().next().value;
+    if (amount < 0)
+      return this.lastKey(amount * -1);
+    amount = Math.min(this.size, amount);
+    const iter = this.keys();
+    return Array.from({ length: amount }, () => iter.next().value);
+  }
+  last(amount) {
+    const arr = [...this.values()];
+    if (amount === void 0)
+      return arr[arr.length - 1];
+    if (amount < 0)
+      return this.first(amount * -1);
+    if (!amount)
+      return [];
+    return arr.slice(-amount);
+  }
+  lastKey(amount) {
+    const arr = [...this.keys()];
+    if (amount === void 0)
+      return arr[arr.length - 1];
+    if (amount < 0)
+      return this.firstKey(amount * -1);
+    if (!amount)
+      return [];
+    return arr.slice(-amount);
+  }
+  /**
+   * Identical to {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/at | Array.at()}.
+   * Returns the item at a given index, allowing for positive and negative integers.
+   * Negative integers count back from the last item in the collection.
+   *
+   * @param index - The index of the element to obtain
+   */
+  at(index) {
+    index = Math.floor(index);
+    const arr = [...this.values()];
+    return arr.at(index);
+  }
+  /**
+   * Identical to {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/at | Array.at()}.
+   * Returns the key at a given index, allowing for positive and negative integers.
+   * Negative integers count back from the last item in the collection.
+   *
+   * @param index - The index of the key to obtain
+   */
+  keyAt(index) {
+    index = Math.floor(index);
+    const arr = [...this.keys()];
+    return arr.at(index);
+  }
+  random(amount) {
+    const arr = [...this.values()];
+    if (amount === void 0)
+      return arr[Math.floor(Math.random() * arr.length)];
+    if (!arr.length || !amount)
+      return [];
+    return Array.from(
+      { length: Math.min(amount, arr.length) },
+      () => arr.splice(Math.floor(Math.random() * arr.length), 1)[0]
+    );
+  }
+  randomKey(amount) {
+    const arr = [...this.keys()];
+    if (amount === void 0)
+      return arr[Math.floor(Math.random() * arr.length)];
+    if (!arr.length || !amount)
+      return [];
+    return Array.from(
+      { length: Math.min(amount, arr.length) },
+      () => arr.splice(Math.floor(Math.random() * arr.length), 1)[0]
+    );
+  }
+  /**
+   * Identical to {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reverse | Array.reverse()}
+   * but returns a Collection instead of an Array.
+   */
+  reverse() {
+    const entries = [...this.entries()].reverse();
+    this.clear();
+    for (const [key, value] of entries)
+      this.set(key, value);
+    return this;
+  }
+  find(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    for (const [key, val] of this) {
+      if (fn(val, key, this))
+        return val;
+    }
+    return void 0;
+  }
+  findKey(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    for (const [key, val] of this) {
+      if (fn(val, key, this))
+        return key;
+    }
+    return void 0;
+  }
+  sweep(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    const previousSize = this.size;
+    for (const [key, val] of this) {
+      if (fn(val, key, this))
+        this.delete(key);
+    }
+    return previousSize - this.size;
+  }
+  filter(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    const results = new this.constructor[Symbol.species]();
+    for (const [key, val] of this) {
+      if (fn(val, key, this))
+        results.set(key, val);
+    }
+    return results;
+  }
+  partition(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    const results = [
+      new this.constructor[Symbol.species](),
+      new this.constructor[Symbol.species]()
+    ];
+    for (const [key, val] of this) {
+      if (fn(val, key, this)) {
+        results[0].set(key, val);
+      } else {
+        results[1].set(key, val);
+      }
+    }
+    return results;
+  }
+  flatMap(fn, thisArg) {
+    const collections = this.map(fn, thisArg);
+    return new this.constructor[Symbol.species]().concat(...collections);
+  }
+  map(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    const iter = this.entries();
+    return Array.from({ length: this.size }, () => {
+      const [key, value] = iter.next().value;
+      return fn(value, key, this);
+    });
+  }
+  mapValues(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    const coll = new this.constructor[Symbol.species]();
+    for (const [key, val] of this)
+      coll.set(key, fn(val, key, this));
+    return coll;
+  }
+  some(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    for (const [key, val] of this) {
+      if (fn(val, key, this))
+        return true;
+    }
+    return false;
+  }
+  every(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    for (const [key, val] of this) {
+      if (!fn(val, key, this))
+        return false;
+    }
+    return true;
+  }
+  /**
+   * Applies a function to produce a single value. Identical in behavior to
+   * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce | Array.reduce()}.
+   *
+   * @param fn - Function used to reduce, taking four arguments; `accumulator`, `currentValue`, `currentKey`,
+   * and `collection`
+   * @param initialValue - Starting value for the accumulator
+   * @example
+   * ```ts
+   * collection.reduce((acc, guild) => acc + guild.memberCount, 0);
+   * ```
+   */
+  reduce(fn, initialValue) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    let accumulator;
+    if (initialValue !== void 0) {
+      accumulator = initialValue;
+      for (const [key, val] of this)
+        accumulator = fn(accumulator, val, key, this);
+      return accumulator;
+    }
+    let first = true;
+    for (const [key, val] of this) {
+      if (first) {
+        accumulator = val;
+        first = false;
+        continue;
+      }
+      accumulator = fn(accumulator, val, key, this);
+    }
+    if (first) {
+      throw new TypeError("Reduce of empty collection with no initial value");
+    }
+    return accumulator;
+  }
+  each(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    for (const [key, value] of this) {
+      fn(value, key, this);
+    }
+    return this;
+  }
+  tap(fn, thisArg) {
+    if (typeof fn !== "function")
+      throw new TypeError(`${fn} is not a function`);
+    if (thisArg !== void 0)
+      fn = fn.bind(thisArg);
+    fn(this);
+    return this;
+  }
+  /**
+   * Creates an identical shallow copy of this collection.
+   *
+   * @example
+   * ```ts
+   * const newColl = someColl.clone();
+   * ```
+   */
+  clone() {
+    return new this.constructor[Symbol.species](this);
+  }
+  /**
+   * Combines this collection with others into a new collection. None of the source collections are modified.
+   *
+   * @param collections - Collections to merge
+   * @example
+   * ```ts
+   * const newColl = someColl.concat(someOtherColl, anotherColl, ohBoyAColl);
+   * ```
+   */
+  concat(...collections) {
+    const newColl = this.clone();
+    for (const coll of collections) {
+      for (const [key, val] of coll)
+        newColl.set(key, val);
+    }
+    return newColl;
+  }
+  /**
+   * Checks if this collection shares identical items with another.
+   * This is different to checking for equality using equal-signs, because
+   * the collections may be different objects, but contain the same data.
+   *
+   * @param collection - Collection to compare with
+   * @returns Whether the collections have identical contents
+   */
+  equals(collection) {
+    if (!collection)
+      return false;
+    if (this === collection)
+      return true;
+    if (this.size !== collection.size)
+      return false;
+    for (const [key, value] of this) {
+      if (!collection.has(key) || value !== collection.get(key)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  /**
+   * The sort method sorts the items of a collection in place and returns it.
+   * The sort is not necessarily stable in Node 10 or older.
+   * The default sort order is according to string Unicode code points.
+   *
+   * @param compareFunction - Specifies a function that defines the sort order.
+   * If omitted, the collection is sorted according to each character's Unicode code point value, according to the string conversion of each element.
+   * @example
+   * ```ts
+   * collection.sort((userA, userB) => userA.createdTimestamp - userB.createdTimestamp);
+   * ```
+   */
+  sort(compareFunction = Collection.defaultSort) {
+    const entries = [...this.entries()];
+    entries.sort((a, b) => compareFunction(a[1], b[1], a[0], b[0]));
+    super.clear();
+    for (const [key, value] of entries) {
+      super.set(key, value);
+    }
+    return this;
+  }
+  /**
+   * The intersect method returns a new structure containing items where the keys and values are present in both original structures.
+   *
+   * @param other - The other Collection to filter against
+   */
+  intersect(other) {
+    const coll = new this.constructor[Symbol.species]();
+    for (const [key, value] of other) {
+      if (this.has(key) && Object.is(value, this.get(key))) {
+        coll.set(key, value);
+      }
+    }
+    return coll;
+  }
+  /**
+   * The subtract method returns a new structure containing items where the keys and values of the original structure are not present in the other.
+   *
+   * @param other - The other Collection to filter against
+   */
+  subtract(other) {
+    const coll = new this.constructor[Symbol.species]();
+    for (const [key, value] of this) {
+      if (!other.has(key) || !Object.is(value, other.get(key))) {
+        coll.set(key, value);
+      }
+    }
+    return coll;
+  }
+  /**
+   * The difference method returns a new structure containing items where the key is present in one of the original structures but not the other.
+   *
+   * @param other - The other Collection to filter against
+   */
+  difference(other) {
+    const coll = new this.constructor[Symbol.species]();
+    for (const [key, value] of other) {
+      if (!this.has(key))
+        coll.set(key, value);
+    }
+    for (const [key, value] of this) {
+      if (!other.has(key))
+        coll.set(key, value);
+    }
+    return coll;
+  }
+  /**
+   * Merges two Collections together into a new Collection.
+   *
+   * @param other - The other Collection to merge with
+   * @param whenInSelf - Function getting the result if the entry only exists in this Collection
+   * @param whenInOther - Function getting the result if the entry only exists in the other Collection
+   * @param whenInBoth - Function getting the result if the entry exists in both Collections
+   * @example
+   * ```ts
+   * // Sums up the entries in two collections.
+   * coll.merge(
+   *  other,
+   *  x => ({ keep: true, value: x }),
+   *  y => ({ keep: true, value: y }),
+   *  (x, y) => ({ keep: true, value: x + y }),
+   * );
+   * ```
+   * @example
+   * ```ts
+   * // Intersects two collections in a left-biased manner.
+   * coll.merge(
+   *  other,
+   *  x => ({ keep: false }),
+   *  y => ({ keep: false }),
+   *  (x, _) => ({ keep: true, value: x }),
+   * );
+   * ```
+   */
+  merge(other, whenInSelf, whenInOther, whenInBoth) {
+    const coll = new this.constructor[Symbol.species]();
+    const keys = /* @__PURE__ */ new Set([...this.keys(), ...other.keys()]);
+    for (const key of keys) {
+      const hasInSelf = this.has(key);
+      const hasInOther = other.has(key);
+      if (hasInSelf && hasInOther) {
+        const result = whenInBoth(this.get(key), other.get(key), key);
+        if (result.keep)
+          coll.set(key, result.value);
+      } else if (hasInSelf) {
+        const result = whenInSelf(this.get(key), key);
+        if (result.keep)
+          coll.set(key, result.value);
+      } else if (hasInOther) {
+        const result = whenInOther(other.get(key), key);
+        if (result.keep)
+          coll.set(key, result.value);
+      }
+    }
+    return coll;
+  }
+  /**
+   * The sorted method sorts the items of a collection and returns it.
+   * The sort is not necessarily stable in Node 10 or older.
+   * The default sort order is according to string Unicode code points.
+   *
+   * @param compareFunction - Specifies a function that defines the sort order.
+   * If omitted, the collection is sorted according to each character's Unicode code point value,
+   * according to the string conversion of each element.
+   * @example
+   * ```ts
+   * collection.sorted((userA, userB) => userA.createdTimestamp - userB.createdTimestamp);
+   * ```
+   */
+  sorted(compareFunction = Collection.defaultSort) {
+    return new this.constructor[Symbol.species](this).sort((av, bv, ak, bk) => compareFunction(av, bv, ak, bk));
+  }
+  toJSON() {
+    return [...this.values()];
+  }
+  static defaultSort(firstValue, secondValue) {
+    return Number(firstValue > secondValue) || Number(firstValue === secondValue) - 1;
+  }
+  /**
+   * Creates a Collection from a list of entries.
+   *
+   * @param entries - The list of entries
+   * @param combine - Function to combine an existing entry with a new one
+   * @example
+   * ```ts
+   * Collection.combineEntries([["a", 1], ["b", 2], ["a", 2]], (x, y) => x + y);
+   * // returns Collection { "a" => 3, "b" => 2 }
+   * ```
+   */
+  static combineEntries(entries, combine) {
+    const coll = new Collection();
+    for (const [key, value] of entries) {
+      if (coll.has(key)) {
+        coll.set(key, combine(coll.get(key), value, key));
+      } else {
+        coll.set(key, value);
+      }
+    }
+    return coll;
+  }
+};
+__name(Collection, "Collection");
+
+// src/index.ts
+var version = "1.5.1";
+// Annotate the CommonJS export names for ESM import in node:
+0 && (0);
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
 /***/ 5429:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -2089,25 +2656,25 @@ var GatewayCloseCodes;
     /**
      * You sent an invalid Gateway opcode or an invalid payload for an opcode. Don't do that!
      *
-     * See https://discord.com/developers/docs/topics/gateway#payloads-and-opcodes
+     * See https://discord.com/developers/docs/topics/gateway-events#payload-structure
      */
     GatewayCloseCodes[GatewayCloseCodes["UnknownOpcode"] = 4001] = "UnknownOpcode";
     /**
      * You sent an invalid payload to us. Don't do that!
      *
-     * See https://discord.com/developers/docs/topics/gateway#sending-payloads
+     * See https://discord.com/developers/docs/topics/gateway#sending-events
      */
     GatewayCloseCodes[GatewayCloseCodes["DecodeError"] = 4002] = "DecodeError";
     /**
      * You sent us a payload prior to identifying
      *
-     * See https://discord.com/developers/docs/topics/gateway#identify
+     * See https://discord.com/developers/docs/topics/gateway-events#identify
      */
     GatewayCloseCodes[GatewayCloseCodes["NotAuthenticated"] = 4003] = "NotAuthenticated";
     /**
      * The account token sent with your identify payload is incorrect
      *
-     * See https://discord.com/developers/docs/topics/gateway#identify
+     * See https://discord.com/developers/docs/topics/gateway-events#identify
      */
     GatewayCloseCodes[GatewayCloseCodes["AuthenticationFailed"] = 4004] = "AuthenticationFailed";
     /**
@@ -2117,7 +2684,7 @@ var GatewayCloseCodes;
     /**
      * The sequence sent when resuming the session was invalid. Reconnect and start a new session
      *
-     * See https://discord.com/developers/docs/topics/gateway#resume
+     * See https://discord.com/developers/docs/topics/gateway-events#resume
      */
     GatewayCloseCodes[GatewayCloseCodes["InvalidSeq"] = 4007] = "InvalidSeq";
     /**
@@ -2167,6 +2734,10 @@ var GatewayIntentBits;
 (function (GatewayIntentBits) {
     GatewayIntentBits[GatewayIntentBits["Guilds"] = 1] = "Guilds";
     GatewayIntentBits[GatewayIntentBits["GuildMembers"] = 2] = "GuildMembers";
+    GatewayIntentBits[GatewayIntentBits["GuildModeration"] = 4] = "GuildModeration";
+    /**
+     * @deprecated This is the old name for {@apilink GatewayIntentBits#GuildModeration}
+     */
     GatewayIntentBits[GatewayIntentBits["GuildBans"] = 4] = "GuildBans";
     GatewayIntentBits[GatewayIntentBits["GuildEmojisAndStickers"] = 8] = "GuildEmojisAndStickers";
     GatewayIntentBits[GatewayIntentBits["GuildIntegrations"] = 16] = "GuildIntegrations";
@@ -2182,9 +2753,11 @@ var GatewayIntentBits;
     GatewayIntentBits[GatewayIntentBits["DirectMessageTyping"] = 16384] = "DirectMessageTyping";
     GatewayIntentBits[GatewayIntentBits["MessageContent"] = 32768] = "MessageContent";
     GatewayIntentBits[GatewayIntentBits["GuildScheduledEvents"] = 65536] = "GuildScheduledEvents";
+    GatewayIntentBits[GatewayIntentBits["AutoModerationConfiguration"] = 1048576] = "AutoModerationConfiguration";
+    GatewayIntentBits[GatewayIntentBits["AutoModerationExecution"] = 2097152] = "AutoModerationExecution";
 })(GatewayIntentBits = exports.GatewayIntentBits || (exports.GatewayIntentBits = {}));
 /**
- * https://discord.com/developers/docs/topics/gateway#commands-and-events-gateway-events
+ * https://discord.com/developers/docs/topics/gateway-events#receive-events
  */
 var GatewayDispatchEvents;
 (function (GatewayDispatchEvents) {
@@ -2244,6 +2817,11 @@ var GatewayDispatchEvents;
     GatewayDispatchEvents["GuildScheduledEventDelete"] = "GUILD_SCHEDULED_EVENT_DELETE";
     GatewayDispatchEvents["GuildScheduledEventUserAdd"] = "GUILD_SCHEDULED_EVENT_USER_ADD";
     GatewayDispatchEvents["GuildScheduledEventUserRemove"] = "GUILD_SCHEDULED_EVENT_USER_REMOVE";
+    GatewayDispatchEvents["AutoModerationRuleCreate"] = "AUTO_MODERATION_RULE_CREATE";
+    GatewayDispatchEvents["AutoModerationRuleUpdate"] = "AUTO_MODERATION_RULE_UPDATE";
+    GatewayDispatchEvents["AutoModerationRuleDelete"] = "AUTO_MODERATION_RULE_DELETE";
+    GatewayDispatchEvents["AutoModerationActionExecution"] = "AUTO_MODERATION_ACTION_EXECUTION";
+    GatewayDispatchEvents["GuildAuditLogEntryCreate"] = "GUILD_AUDIT_LOG_ENTRY_CREATE";
 })(GatewayDispatchEvents = exports.GatewayDispatchEvents || (exports.GatewayDispatchEvents = {}));
 // #endregion Shared
 //# sourceMappingURL=v10.js.map
@@ -2271,6 +2849,7 @@ exports.FormattingPatterns = {
      * Regular expression for matching a user mention, strictly with a nickname
      *
      * The `id` group property is present on the `exec` result of this expression
+     *
      * @deprecated Passing `!` in user mentions is no longer necessary / supported, and future message contents won't have it
      */
     UserWithNickname: /<@!(?<id>\d{17,20})>/,
@@ -2278,6 +2857,7 @@ exports.FormattingPatterns = {
      * Regular expression for matching a user mention, with or without a nickname
      *
      * The `id` group property is present on the `exec` result of this expression
+     *
      * @deprecated Passing `!` in user mentions is no longer necessary / supported, and future message contents won't have it
      */
     UserWithOptionalNickname: /<@!?(?<id>\d{17,20})>/,
@@ -2298,7 +2878,9 @@ exports.FormattingPatterns = {
      *
      * The `fullName` (possibly including `name`, `subcommandOrGroup` and `subcommand`) and `id` group properties are present on the `exec` result of this expression
      */
-    SlashCommand: /<\/(?<fullName>(?<name>[\w-]{1,32})(?: (?<subcommandOrGroup>[\w-]{1,32}))?(?: (?<subcommand>[\w-]{1,32}))?):(?<id>\d{17,20})>/,
+    SlashCommand: 
+    // eslint-disable-next-line unicorn/no-unsafe-regex
+    /<\/(?<fullName>(?<name>[-_\p{Letter}\p{Number}\p{sc=Deva}\p{sc=Thai}]{1,32})(?: (?<subcommandOrGroup>[-_\p{Letter}\p{Number}\p{sc=Deva}\p{sc=Thai}]{1,32}))?(?: (?<subcommand>[-_\p{Letter}\p{Number}\p{sc=Deva}\p{sc=Thai}]{1,32}))?):(?<id>\d{17,20})>/u,
     /**
      * Regular expression for matching a custom emoji, either static or animated
      *
@@ -2322,7 +2904,8 @@ exports.FormattingPatterns = {
      *
      * The `timestamp` and `style` group properties are present on the `exec` result of this expression
      */
-    Timestamp: /<t:(?<timestamp>-?\d{1,13})(:(?<style>[tTdDfFR]))?>/,
+    // eslint-disable-next-line prefer-named-capture-group
+    Timestamp: /<t:(?<timestamp>-?\d{1,13})(:(?<style>[DFRTdft]))?>/,
     /**
      * Regular expression for matching strictly default styled timestamps
      *
@@ -2334,10 +2917,11 @@ exports.FormattingPatterns = {
      *
      * The `timestamp` and `style` group properties are present on the `exec` result of this expression
      */
-    StyledTimestamp: /<t:(?<timestamp>-?\d{1,13}):(?<style>[tTdDfFR])>/,
+    StyledTimestamp: /<t:(?<timestamp>-?\d{1,13}):(?<style>[DFRTdft])>/,
 };
 /**
  * Freezes the formatting patterns
+ *
  * @internal
  */
 Object.freeze(exports.FormattingPatterns);
@@ -2360,50 +2944,268 @@ exports.PermissionFlagsBits = void 0;
  * replicate them in some way
  */
 exports.PermissionFlagsBits = {
+    /**
+     * Allows creation of instant invites
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     CreateInstantInvite: 1n << 0n,
+    /**
+     * Allows kicking members
+     */
+    // eslint-disable-next-line sonarjs/no-identical-expressions
     KickMembers: 1n << 1n,
+    /**
+     * Allows banning members
+     */
     BanMembers: 1n << 2n,
+    /**
+     * Allows all permissions and bypasses channel permission overwrites
+     */
     Administrator: 1n << 3n,
+    /**
+     * Allows management and editing of channels
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     ManageChannels: 1n << 4n,
+    /**
+     * Allows management and editing of the guild
+     */
     ManageGuild: 1n << 5n,
+    /**
+     * Allows for the addition of reactions to messages
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     AddReactions: 1n << 6n,
+    /**
+     * Allows for viewing of audit logs
+     */
     ViewAuditLog: 1n << 7n,
+    /**
+     * Allows for using priority speaker in a voice channel
+     *
+     * Applies to channel types: Voice
+     */
     PrioritySpeaker: 1n << 8n,
+    /**
+     * Allows the user to go live
+     *
+     * Applies to channel types: Voice, Stage
+     */
     Stream: 1n << 9n,
+    /**
+     * Allows guild members to view a channel, which includes reading messages in text channels and joining voice channels
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     ViewChannel: 1n << 10n,
+    /**
+     * Allows for sending messages in a channel and creating threads in a forum
+     * (does not allow sending messages in threads)
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     SendMessages: 1n << 11n,
+    /**
+     * Allows for sending of `/tts` messages
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     SendTTSMessages: 1n << 12n,
+    /**
+     * Allows for deletion of other users messages
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     ManageMessages: 1n << 13n,
+    /**
+     * Links sent by users with this permission will be auto-embedded
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     EmbedLinks: 1n << 14n,
+    /**
+     * Allows for uploading images and files
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     AttachFiles: 1n << 15n,
+    /**
+     * Allows for reading of message history
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     ReadMessageHistory: 1n << 16n,
+    /**
+     * Allows for using the `@everyone` tag to notify all users in a channel,
+     * and the `@here` tag to notify all online users in a channel
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     MentionEveryone: 1n << 17n,
+    /**
+     * Allows the usage of custom emojis from other servers
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     UseExternalEmojis: 1n << 18n,
+    /**
+     * Allows for viewing guild insights
+     */
     ViewGuildInsights: 1n << 19n,
+    /**
+     * Allows for joining of a voice channel
+     *
+     * Applies to channel types: Voice, Stage
+     */
     Connect: 1n << 20n,
+    /**
+     * Allows for speaking in a voice channel
+     *
+     * Applies to channel types: Voice
+     */
     Speak: 1n << 21n,
+    /**
+     * Allows for muting members in a voice channel
+     *
+     * Applies to channel types: Voice, Stage
+     */
     MuteMembers: 1n << 22n,
+    /**
+     * Allows for deafening of members in a voice channel
+     *
+     * Applies to channel types: Voice
+     */
     DeafenMembers: 1n << 23n,
+    /**
+     * Allows for moving of members between voice channels
+     *
+     * Applies to channel types: Voice, Stage
+     */
     MoveMembers: 1n << 24n,
+    /**
+     * Allows for using voice-activity-detection in a voice channel
+     *
+     * Applies to channel types: Voice
+     */
     UseVAD: 1n << 25n,
+    /**
+     * Allows for modification of own nickname
+     */
     ChangeNickname: 1n << 26n,
+    /**
+     * Allows for modification of other users nicknames
+     */
     ManageNicknames: 1n << 27n,
+    /**
+     * Allows management and editing of roles
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     ManageRoles: 1n << 28n,
+    /**
+     * Allows management and editing of webhooks
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     ManageWebhooks: 1n << 29n,
+    /**
+     * Allows management and editing of emojis, stickers, and soundboard sounds
+     *
+     * @deprecated This is the old name for {@apilink PermissionFlagsBits#ManageGuildExpressions}
+     */
     ManageEmojisAndStickers: 1n << 30n,
+    /**
+     * Allows management and editing of emojis, stickers, and soundboard sounds
+     */
+    ManageGuildExpressions: 1n << 30n,
+    /**
+     * Allows members to use application commands, including slash commands and context menu commands
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     UseApplicationCommands: 1n << 31n,
+    /**
+     * Allows for requesting to speak in stage channels
+     *
+     * Applies to channel types: Stage
+     */
     RequestToSpeak: 1n << 32n,
+    /**
+     * Allows for creating, editing, and deleting scheduled events
+     *
+     * Applies to channel types: Voice, Stage
+     */
     ManageEvents: 1n << 33n,
+    /**
+     * Allows for deleting and archiving threads, and viewing all private threads
+     *
+     * Applies to channel types: Text
+     */
     ManageThreads: 1n << 34n,
+    /**
+     * Allows for creating public and announcement threads
+     *
+     * Applies to channel types: Text
+     */
     CreatePublicThreads: 1n << 35n,
+    /**
+     * Allows for creating private threads
+     *
+     * Applies to channel types: Text
+     */
     CreatePrivateThreads: 1n << 36n,
+    /**
+     * Allows the usage of custom stickers from other servers
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
     UseExternalStickers: 1n << 37n,
+    /**
+     * Allows for sending messages in threads
+     *
+     * Applies to channel types: Text
+     */
     SendMessagesInThreads: 1n << 38n,
+    /**
+     * Allows for using Activities (applications with the {@apilink ApplicationFlags.Embedded} flag) in a voice channel
+     *
+     * Applies to channel types: Voice
+     */
     UseEmbeddedActivities: 1n << 39n,
+    /**
+     * Allows for timing out users to prevent them from sending or reacting to messages in chat and threads,
+     * and from speaking in voice and stage channels
+     */
     ModerateMembers: 1n << 40n,
+    /**
+     * Allows for viewing role subscription insights
+     */
+    ViewCreatorMonetizationAnalytics: 1n << 41n,
+    /**
+     * Allows for using soundboard in a voice channel
+     *
+     * Applies to channel types: Voice
+     */
+    UseSoundboard: 1n << 42n,
+    /**
+     * Allows the usage of custom soundboard sounds from other servers
+     *
+     * Applies to channel types: Voice
+     */
+    UseExternalSounds: 1n << 45n,
+    /**
+     * Allows sending voice messages
+     *
+     * Applies to channel types: Text, Voice, Stage
+     */
+    SendVoiceMessages: 1n << 46n,
 };
 /**
  * Freeze the object of bits, preventing any modifications to it
+ *
  * @internal
  */
 Object.freeze(exports.PermissionFlagsBits);
@@ -2626,6 +3428,7 @@ var ApplicationCommandPermissionType;
  * https://discord.com/developers/docs/interactions/application-commands#application-command-permissions-object-application-command-permissions-constants
  */
 exports.APIApplicationCommandPermissionsConstant = {
+    // eslint-disable-next-line unicorn/prefer-native-coercion-functions
     Everyone: (guildId) => String(guildId),
     AllChannels: (guildId) => String(BigInt(guildId) - 1n),
 };
@@ -2785,27 +3588,118 @@ var InteractionResponseType;
  * Types extracted from https://discord.com/developers/docs/resources/application
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ApplicationFlags = void 0;
+exports.ApplicationRoleConnectionMetadataType = exports.ApplicationFlags = void 0;
 /**
  * https://discord.com/developers/docs/resources/application#application-object-application-flags
  */
 var ApplicationFlags;
 (function (ApplicationFlags) {
+    /**
+     * @unstable This application flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
     ApplicationFlags[ApplicationFlags["EmbeddedReleased"] = 2] = "EmbeddedReleased";
+    /**
+     * @unstable This application flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
     ApplicationFlags[ApplicationFlags["ManagedEmoji"] = 4] = "ManagedEmoji";
+    /**
+     * @unstable This application flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ApplicationFlags[ApplicationFlags["EmbeddedIAP"] = 8] = "EmbeddedIAP";
+    /**
+     * @unstable This application flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
     ApplicationFlags[ApplicationFlags["GroupDMCreate"] = 16] = "GroupDMCreate";
+    /**
+     * Indicates if an app uses the Auto Moderation API
+     */
+    ApplicationFlags[ApplicationFlags["ApplicationAutoModerationRuleCreateBadge"] = 64] = "ApplicationAutoModerationRuleCreateBadge";
+    /**
+     * @unstable This application flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
     ApplicationFlags[ApplicationFlags["RPCHasConnected"] = 2048] = "RPCHasConnected";
+    /**
+     * Intent required for bots in 100 or more servers to receive `presence_update` events
+     */
     ApplicationFlags[ApplicationFlags["GatewayPresence"] = 4096] = "GatewayPresence";
+    /**
+     * Intent required for bots in under 100 servers to receive `presence_update` events, found in Bot Settings
+     */
     ApplicationFlags[ApplicationFlags["GatewayPresenceLimited"] = 8192] = "GatewayPresenceLimited";
+    /**
+     * Intent required for bots in 100 or more servers to receive member-related events like `guild_member_add`.
+     * See list of member-related events [under `GUILD_MEMBERS`](https://discord.com/developers/docs/topics/gateway#list-of-intents)
+     */
     ApplicationFlags[ApplicationFlags["GatewayGuildMembers"] = 16384] = "GatewayGuildMembers";
+    /**
+     * Intent required for bots in under 100 servers to receive member-related events like `guild_member_add`, found in Bot Settings.
+     * See list of member-related events [under `GUILD_MEMBERS`](https://discord.com/developers/docs/topics/gateway#list-of-intents)
+     */
     ApplicationFlags[ApplicationFlags["GatewayGuildMembersLimited"] = 32768] = "GatewayGuildMembersLimited";
+    /**
+     * Indicates unusual growth of an app that prevents verification
+     */
     ApplicationFlags[ApplicationFlags["VerificationPendingGuildLimit"] = 65536] = "VerificationPendingGuildLimit";
+    /**
+     * Indicates if an app is embedded within the Discord client (currently unavailable publicly)
+     */
     ApplicationFlags[ApplicationFlags["Embedded"] = 131072] = "Embedded";
+    /**
+     * Intent required for bots in 100 or more servers to receive [message content](https://support-dev.discord.com/hc/en-us/articles/4404772028055)
+     */
     ApplicationFlags[ApplicationFlags["GatewayMessageContent"] = 262144] = "GatewayMessageContent";
+    /**
+     * Intent required for bots in under 100 servers to receive [message content](https://support-dev.discord.com/hc/en-us/articles/4404772028055),
+     * found in Bot Settings
+     */
     ApplicationFlags[ApplicationFlags["GatewayMessageContentLimited"] = 524288] = "GatewayMessageContentLimited";
+    /**
+     * @unstable This application flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
     ApplicationFlags[ApplicationFlags["EmbeddedFirstParty"] = 1048576] = "EmbeddedFirstParty";
+    /**
+     * Indicates if an app has registered global [application commands](https://discord.com/developers/docs/interactions/application-commands)
+     */
     ApplicationFlags[ApplicationFlags["ApplicationCommandBadge"] = 8388608] = "ApplicationCommandBadge";
 })(ApplicationFlags = exports.ApplicationFlags || (exports.ApplicationFlags = {}));
+/**
+ * https://discord.com/developers/docs/resources/application-role-connection-metadata#application-role-connection-metadata-object-application-role-connection-metadata-type
+ */
+var ApplicationRoleConnectionMetadataType;
+(function (ApplicationRoleConnectionMetadataType) {
+    /**
+     * The metadata value (`integer`) is less than or equal to the guild's configured value (`integer`)
+     */
+    ApplicationRoleConnectionMetadataType[ApplicationRoleConnectionMetadataType["IntegerLessThanOrEqual"] = 1] = "IntegerLessThanOrEqual";
+    /**
+     * The metadata value (`integer`) is greater than or equal to the guild's configured value (`integer`)
+     */
+    ApplicationRoleConnectionMetadataType[ApplicationRoleConnectionMetadataType["IntegerGreaterThanOrEqual"] = 2] = "IntegerGreaterThanOrEqual";
+    /**
+     * The metadata value (`integer`) is equal to the guild's configured value (`integer`)
+     */
+    ApplicationRoleConnectionMetadataType[ApplicationRoleConnectionMetadataType["IntegerEqual"] = 3] = "IntegerEqual";
+    /**
+     * The metadata value (`integer`) is not equal to the guild's configured value (`integer`)
+     */
+    ApplicationRoleConnectionMetadataType[ApplicationRoleConnectionMetadataType["IntegerNotEqual"] = 4] = "IntegerNotEqual";
+    /**
+     * The metadata value (`ISO8601 string`) is less than or equal to the guild's configured value (`integer`; days before current date)
+     */
+    ApplicationRoleConnectionMetadataType[ApplicationRoleConnectionMetadataType["DatetimeLessThanOrEqual"] = 5] = "DatetimeLessThanOrEqual";
+    /**
+     * The metadata value (`ISO8601 string`) is greater than or equal to the guild's configured value (`integer`; days before current date)
+     */
+    ApplicationRoleConnectionMetadataType[ApplicationRoleConnectionMetadataType["DatetimeGreaterThanOrEqual"] = 6] = "DatetimeGreaterThanOrEqual";
+    /**
+     * The metadata value (`integer`) is equal to the guild's configured value (`integer`; `1`)
+     */
+    ApplicationRoleConnectionMetadataType[ApplicationRoleConnectionMetadataType["BooleanEqual"] = 7] = "BooleanEqual";
+    /**
+     * The metadata value (`integer`) is not equal to the guild's configured value (`integer`; `1`)
+     */
+    ApplicationRoleConnectionMetadataType[ApplicationRoleConnectionMetadataType["BooleanNotEqual"] = 8] = "BooleanNotEqual";
+})(ApplicationRoleConnectionMetadataType = exports.ApplicationRoleConnectionMetadataType || (exports.ApplicationRoleConnectionMetadataType = {}));
 //# sourceMappingURL=application.js.map
 
 /***/ }),
@@ -2873,6 +3767,12 @@ var AuditLogEvent;
     AuditLogEvent[AuditLogEvent["ThreadUpdate"] = 111] = "ThreadUpdate";
     AuditLogEvent[AuditLogEvent["ThreadDelete"] = 112] = "ThreadDelete";
     AuditLogEvent[AuditLogEvent["ApplicationCommandPermissionUpdate"] = 121] = "ApplicationCommandPermissionUpdate";
+    AuditLogEvent[AuditLogEvent["AutoModerationRuleCreate"] = 140] = "AutoModerationRuleCreate";
+    AuditLogEvent[AuditLogEvent["AutoModerationRuleUpdate"] = 141] = "AutoModerationRuleUpdate";
+    AuditLogEvent[AuditLogEvent["AutoModerationRuleDelete"] = 142] = "AutoModerationRuleDelete";
+    AuditLogEvent[AuditLogEvent["AutoModerationBlockMessage"] = 143] = "AutoModerationBlockMessage";
+    AuditLogEvent[AuditLogEvent["AutoModerationFlagToChannel"] = 144] = "AutoModerationFlagToChannel";
+    AuditLogEvent[AuditLogEvent["AutoModerationUserCommunicationDisabled"] = 145] = "AutoModerationUserCommunicationDisabled";
 })(AuditLogEvent = exports.AuditLogEvent || (exports.AuditLogEvent = {}));
 var AuditLogOptionsType;
 (function (AuditLogOptionsType) {
@@ -2880,6 +3780,89 @@ var AuditLogOptionsType;
     AuditLogOptionsType["Member"] = "1";
 })(AuditLogOptionsType = exports.AuditLogOptionsType || (exports.AuditLogOptionsType = {}));
 //# sourceMappingURL=auditLog.js.map
+
+/***/ }),
+
+/***/ 8933:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Types extracted from https://discord.com/developers/docs/resources/auto-moderation
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AutoModerationActionType = exports.AutoModerationRuleEventType = exports.AutoModerationRuleKeywordPresetType = exports.AutoModerationRuleTriggerType = void 0;
+/**
+ * https://discord.com/developers/docs/resources/auto-moderation#auto-moderation-rule-object-trigger-types
+ */
+var AutoModerationRuleTriggerType;
+(function (AutoModerationRuleTriggerType) {
+    /**
+     * Check if content contains words from a user defined list of keywords (Maximum of 6 per guild)
+     */
+    AutoModerationRuleTriggerType[AutoModerationRuleTriggerType["Keyword"] = 1] = "Keyword";
+    /**
+     * Check if content represents generic spam (Maximum of 1 per guild)
+     */
+    AutoModerationRuleTriggerType[AutoModerationRuleTriggerType["Spam"] = 3] = "Spam";
+    /**
+     * Check if content contains words from internal pre-defined wordsets (Maximum of 1 per guild)
+     */
+    AutoModerationRuleTriggerType[AutoModerationRuleTriggerType["KeywordPreset"] = 4] = "KeywordPreset";
+    /**
+     * Check if content contains more mentions than allowed (Maximum of 1 per guild)
+     */
+    AutoModerationRuleTriggerType[AutoModerationRuleTriggerType["MentionSpam"] = 5] = "MentionSpam";
+})(AutoModerationRuleTriggerType = exports.AutoModerationRuleTriggerType || (exports.AutoModerationRuleTriggerType = {}));
+/**
+ * https://discord.com/developers/docs/resources/auto-moderation#auto-moderation-rule-object-keyword-preset-types
+ */
+var AutoModerationRuleKeywordPresetType;
+(function (AutoModerationRuleKeywordPresetType) {
+    /**
+     * Words that may be considered forms of swearing or cursing
+     */
+    AutoModerationRuleKeywordPresetType[AutoModerationRuleKeywordPresetType["Profanity"] = 1] = "Profanity";
+    /**
+     * Words that refer to sexually explicit behavior or activity
+     */
+    AutoModerationRuleKeywordPresetType[AutoModerationRuleKeywordPresetType["SexualContent"] = 2] = "SexualContent";
+    /**
+     * Personal insults or words that may be considered hate speech
+     */
+    AutoModerationRuleKeywordPresetType[AutoModerationRuleKeywordPresetType["Slurs"] = 3] = "Slurs";
+})(AutoModerationRuleKeywordPresetType = exports.AutoModerationRuleKeywordPresetType || (exports.AutoModerationRuleKeywordPresetType = {}));
+/**
+ * https://discord.com/developers/docs/resources/auto-moderation#auto-moderation-rule-object-event-types
+ */
+var AutoModerationRuleEventType;
+(function (AutoModerationRuleEventType) {
+    /**
+     * When a member sends or edits a message in the guild
+     */
+    AutoModerationRuleEventType[AutoModerationRuleEventType["MessageSend"] = 1] = "MessageSend";
+})(AutoModerationRuleEventType = exports.AutoModerationRuleEventType || (exports.AutoModerationRuleEventType = {}));
+/**
+ * https://discord.com/developers/docs/resources/auto-moderation#auto-moderation-action-object-action-types
+ */
+var AutoModerationActionType;
+(function (AutoModerationActionType) {
+    /**
+     * Blocks a member's message and prevents it from being posted.
+     * A custom explanation can be specified and shown to members whenever their message is blocked
+     */
+    AutoModerationActionType[AutoModerationActionType["BlockMessage"] = 1] = "BlockMessage";
+    /**
+     * Logs user content to a specified channel
+     */
+    AutoModerationActionType[AutoModerationActionType["SendAlertMessage"] = 2] = "SendAlertMessage";
+    /**
+     * Timeout user for specified duration, this action type can be set if the bot has `MODERATE_MEMBERS` permission
+     */
+    AutoModerationActionType[AutoModerationActionType["Timeout"] = 3] = "Timeout";
+})(AutoModerationActionType = exports.AutoModerationActionType || (exports.AutoModerationActionType = {}));
+//# sourceMappingURL=autoModeration.js.map
 
 /***/ }),
 
@@ -2892,7 +3875,39 @@ var AuditLogOptionsType;
  * Types extracted from https://discord.com/developers/docs/resources/channel
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ChannelFlags = exports.TextInputStyle = exports.ButtonStyle = exports.ComponentType = exports.AllowedMentionsTypes = exports.EmbedType = exports.ThreadMemberFlags = exports.ThreadAutoArchiveDuration = exports.OverwriteType = exports.MessageFlags = exports.MessageActivityType = exports.MessageType = exports.VideoQualityMode = exports.ChannelType = void 0;
+exports.ChannelFlags = exports.TextInputStyle = exports.ButtonStyle = exports.ComponentType = exports.AllowedMentionsTypes = exports.EmbedType = exports.ThreadMemberFlags = exports.ThreadAutoArchiveDuration = exports.OverwriteType = exports.MessageFlags = exports.MessageActivityType = exports.MessageType = exports.VideoQualityMode = exports.ChannelType = exports.ForumLayoutType = exports.SortOrderType = void 0;
+/**
+ * https://discord.com/developers/docs/resources/channel/#channel-object-sort-order-types
+ */
+var SortOrderType;
+(function (SortOrderType) {
+    /**
+     * Sort forum posts by activity
+     */
+    SortOrderType[SortOrderType["LatestActivity"] = 0] = "LatestActivity";
+    /**
+     * Sort forum posts by creation time (from most recent to oldest)
+     */
+    SortOrderType[SortOrderType["CreationDate"] = 1] = "CreationDate";
+})(SortOrderType = exports.SortOrderType || (exports.SortOrderType = {}));
+/**
+ * https://discord.com/developers/docs/resources/channel/#channel-object-forum-layout-types
+ */
+var ForumLayoutType;
+(function (ForumLayoutType) {
+    /**
+     * No default has been set for forum channel
+     */
+    ForumLayoutType[ForumLayoutType["NotSet"] = 0] = "NotSet";
+    /**
+     * Display posts as a list
+     */
+    ForumLayoutType[ForumLayoutType["ListView"] = 1] = "ListView";
+    /**
+     * Display posts as a collection of tiles
+     */
+    ForumLayoutType[ForumLayoutType["GalleryView"] = 2] = "GalleryView";
+})(ForumLayoutType = exports.ForumLayoutType || (exports.ForumLayoutType = {}));
 /**
  * https://discord.com/developers/docs/resources/channel#channel-object-channel-types
  */
@@ -2917,13 +3932,13 @@ var ChannelType;
     /**
      * An organizational category that contains up to 50 channels
      *
-     * See https://support.discord.com/hc/en-us/articles/115001580171-Channel-Categories-101
+     * See https://support.discord.com/hc/articles/115001580171
      */
     ChannelType[ChannelType["GuildCategory"] = 4] = "GuildCategory";
     /**
      * A channel that users can follow and crosspost into their own guild
      *
-     * See https://support.discord.com/hc/en-us/articles/360032008192
+     * See https://support.discord.com/hc/articles/360032008192
      */
     ChannelType[ChannelType["GuildAnnouncement"] = 5] = "GuildAnnouncement";
     /**
@@ -2931,7 +3946,7 @@ var ChannelType;
      */
     ChannelType[ChannelType["AnnouncementThread"] = 10] = "AnnouncementThread";
     /**
-     * A temporary sub-channel within a Guild Text channel
+     * A temporary sub-channel within a Guild Text or Guild Forum channel
      */
     ChannelType[ChannelType["PublicThread"] = 11] = "PublicThread";
     /**
@@ -2941,13 +3956,13 @@ var ChannelType;
     /**
      * A voice channel for hosting events with an audience
      *
-     * See https://support.discord.com/hc/en-us/articles/1500005513722
+     * See https://support.discord.com/hc/articles/1500005513722
      */
     ChannelType[ChannelType["GuildStageVoice"] = 13] = "GuildStageVoice";
     /**
      * The channel in a Student Hub containing the listed servers
      *
-     * See https://support.discord.com/hc/en-us/articles/4406046651927-Discord-Student-Hubs-FAQ
+     * See https://support.discord.com/hc/articles/4406046651927
      */
     ChannelType[ChannelType["GuildDirectory"] = 14] = "GuildDirectory";
     /**
@@ -2960,7 +3975,7 @@ var ChannelType;
      *
      * @deprecated This is the old name for {@apilink ChannelType#GuildAnnouncement}
      *
-     * See https://support.discord.com/hc/en-us/articles/360032008192
+     * See https://support.discord.com/hc/articles/360032008192
      */
     ChannelType[ChannelType["GuildNews"] = 5] = "GuildNews";
     /**
@@ -2968,6 +3983,7 @@ var ChannelType;
      *
      * @deprecated This is the old name for {@apilink ChannelType#AnnouncementThread}
      */
+    // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
     ChannelType[ChannelType["GuildNewsThread"] = 10] = "GuildNewsThread";
     /**
      * A temporary sub-channel within a Guild Text channel
@@ -3021,6 +4037,18 @@ var MessageType;
     MessageType[MessageType["ThreadStarterMessage"] = 21] = "ThreadStarterMessage";
     MessageType[MessageType["GuildInviteReminder"] = 22] = "GuildInviteReminder";
     MessageType[MessageType["ContextMenuCommand"] = 23] = "ContextMenuCommand";
+    MessageType[MessageType["AutoModerationAction"] = 24] = "AutoModerationAction";
+    MessageType[MessageType["RoleSubscriptionPurchase"] = 25] = "RoleSubscriptionPurchase";
+    MessageType[MessageType["InteractionPremiumUpsell"] = 26] = "InteractionPremiumUpsell";
+    MessageType[MessageType["StageStart"] = 27] = "StageStart";
+    MessageType[MessageType["StageEnd"] = 28] = "StageEnd";
+    MessageType[MessageType["StageSpeaker"] = 29] = "StageSpeaker";
+    /**
+     * @unstable https://github.com/discord/discord-api-docs/pull/5927#discussion_r1107678548
+     */
+    MessageType[MessageType["StageRaiseHand"] = 30] = "StageRaiseHand";
+    MessageType[MessageType["StageTopic"] = 31] = "StageTopic";
+    MessageType[MessageType["GuildApplicationPremiumSubscription"] = 32] = "GuildApplicationPremiumSubscription";
 })(MessageType = exports.MessageType || (exports.MessageType = {}));
 /**
  * https://discord.com/developers/docs/resources/channel#message-object-message-activity-types
@@ -3073,6 +4101,18 @@ var MessageFlags;
      * This message failed to mention some roles and add their members to the thread
      */
     MessageFlags[MessageFlags["FailedToMentionSomeRolesInThread"] = 256] = "FailedToMentionSomeRolesInThread";
+    /**
+     * @unstable This message flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    MessageFlags[MessageFlags["ShouldShowLinkNotDiscordWarning"] = 1024] = "ShouldShowLinkNotDiscordWarning";
+    /**
+     * This message will not trigger push and desktop notifications
+     */
+    MessageFlags[MessageFlags["SuppressNotifications"] = 4096] = "SuppressNotifications";
+    /**
+     * This message is a voice message
+     */
+    MessageFlags[MessageFlags["IsVoiceMessage"] = 8192] = "IsVoiceMessage";
 })(MessageFlags = exports.MessageFlags || (exports.MessageFlags = {}));
 var OverwriteType;
 (function (OverwriteType) {
@@ -3088,9 +4128,26 @@ var ThreadAutoArchiveDuration;
 })(ThreadAutoArchiveDuration = exports.ThreadAutoArchiveDuration || (exports.ThreadAutoArchiveDuration = {}));
 var ThreadMemberFlags;
 (function (ThreadMemberFlags) {
+    /**
+     * @unstable This thread member flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ThreadMemberFlags[ThreadMemberFlags["HasInteracted"] = 1] = "HasInteracted";
+    /**
+     * @unstable This thread member flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ThreadMemberFlags[ThreadMemberFlags["AllMessages"] = 2] = "AllMessages";
+    /**
+     * @unstable This thread member flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ThreadMemberFlags[ThreadMemberFlags["OnlyMentions"] = 4] = "OnlyMentions";
+    /**
+     * @unstable This thread member flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ThreadMemberFlags[ThreadMemberFlags["NoMessages"] = 8] = "NoMessages";
 })(ThreadMemberFlags = exports.ThreadMemberFlags || (exports.ThreadMemberFlags = {}));
 /**
  * https://discord.com/developers/docs/resources/channel#embed-object-embed-types
+ *
  * @deprecated *Embed types should be considered deprecated and might be removed in a future API version*
  */
 var EmbedType;
@@ -3119,6 +4176,12 @@ var EmbedType;
      * Link embed
      */
     EmbedType["Link"] = "link";
+    /**
+     * Auto moderation alert embed
+     *
+     * @unstable This embed type is currently not documented by Discord, but it is returned in the auto moderation system messages.
+     */
+    EmbedType["AutoModerationMessage"] = "auto_moderation_message";
 })(EmbedType = exports.EmbedType || (exports.EmbedType = {}));
 /**
  * https://discord.com/developers/docs/resources/channel#allowed-mentions-object-allowed-mention-types
@@ -3152,13 +4215,36 @@ var ComponentType;
      */
     ComponentType[ComponentType["Button"] = 2] = "Button";
     /**
-     * Select Menu component
+     * Select menu for picking from defined text options
      */
-    ComponentType[ComponentType["SelectMenu"] = 3] = "SelectMenu";
+    ComponentType[ComponentType["StringSelect"] = 3] = "StringSelect";
     /**
      * Text Input component
      */
     ComponentType[ComponentType["TextInput"] = 4] = "TextInput";
+    /**
+     * Select menu for users
+     */
+    ComponentType[ComponentType["UserSelect"] = 5] = "UserSelect";
+    /**
+     * Select menu for roles
+     */
+    ComponentType[ComponentType["RoleSelect"] = 6] = "RoleSelect";
+    /**
+     * Select menu for users and roles
+     */
+    ComponentType[ComponentType["MentionableSelect"] = 7] = "MentionableSelect";
+    /**
+     * Select menu for channels
+     */
+    ComponentType[ComponentType["ChannelSelect"] = 8] = "ChannelSelect";
+    // EVERYTHING BELOW THIS LINE SHOULD BE OLD NAMES FOR RENAMED ENUM MEMBERS //
+    /**
+     * Select menu for picking from defined text options
+     *
+     * @deprecated This is the old name for {@apilink ComponentType#StringSelect}
+     */
+    ComponentType[ComponentType["SelectMenu"] = 3] = "SelectMenu";
 })(ComponentType = exports.ComponentType || (exports.ComponentType = {}));
 /**
  * https://discord.com/developers/docs/interactions/message-components#button-object-button-styles
@@ -3184,7 +4270,39 @@ var TextInputStyle;
  */
 var ChannelFlags;
 (function (ChannelFlags) {
+    /**
+     * @unstable This channel flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ChannelFlags[ChannelFlags["GuildFeedRemoved"] = 1] = "GuildFeedRemoved";
+    /**
+     * This thread is pinned to the top of its parent forum channel
+     */
     ChannelFlags[ChannelFlags["Pinned"] = 2] = "Pinned";
+    /**
+     * @unstable This channel flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ChannelFlags[ChannelFlags["ActiveChannelsRemoved"] = 4] = "ActiveChannelsRemoved";
+    /**
+     * Whether a tag is required to be specified when creating a thread in a forum channel.
+     * Tags are specified in the `applied_tags` field
+     */
+    ChannelFlags[ChannelFlags["RequireTag"] = 16] = "RequireTag";
+    /**
+     * @unstable This channel flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ChannelFlags[ChannelFlags["IsSpam"] = 32] = "IsSpam";
+    /**
+     * @unstable This channel flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ChannelFlags[ChannelFlags["IsGuildResourceChannel"] = 128] = "IsGuildResourceChannel";
+    /**
+     * @unstable This channel flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ChannelFlags[ChannelFlags["ClydeAI"] = 256] = "ClydeAI";
+    /**
+     * @unstable This channel flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    ChannelFlags[ChannelFlags["IsScheduledForDeletion"] = 512] = "IsScheduledForDeletion";
 })(ChannelFlags = exports.ChannelFlags || (exports.ChannelFlags = {}));
 //# sourceMappingURL=channel.js.map
 
@@ -3209,7 +4327,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 "use strict";
 
 /**
- * Types extracted from https://discord.com/developers/docs/topics/gateway
+ * Types extracted from
+ *  - https://discord.com/developers/docs/topics/gateway
+ *  - https://discord.com/developers/docs/topics/gateway-events
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ActivityFlags = exports.ActivityType = exports.ActivityPlatform = exports.PresenceUpdateStatus = void 0;
@@ -3240,7 +4360,7 @@ var ActivityPlatform;
     ActivityPlatform["PS5"] = "ps5";
 })(ActivityPlatform = exports.ActivityPlatform || (exports.ActivityPlatform = {}));
 /**
- * https://discord.com/developers/docs/topics/gateway#activity-object-activity-types
+ * https://discord.com/developers/docs/topics/gateway-events#activity-object-activity-types
  */
 var ActivityType;
 (function (ActivityType) {
@@ -3270,7 +4390,7 @@ var ActivityType;
     ActivityType[ActivityType["Competing"] = 5] = "Competing";
 })(ActivityType = exports.ActivityType || (exports.ActivityType = {}));
 /**
- * https://discord.com/developers/docs/topics/gateway#activity-object-activity-flags
+ * https://discord.com/developers/docs/topics/gateway-events#activity-object-activity-flags
  */
 var ActivityFlags;
 (function (ActivityFlags) {
@@ -3297,7 +4417,7 @@ var ActivityFlags;
  * Types extracted from https://discord.com/developers/docs/resources/guild
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.MembershipScreeningFieldType = exports.GuildWidgetStyle = exports.IntegrationExpireBehavior = exports.GuildFeature = exports.GuildSystemChannelFlags = exports.GuildHubType = exports.GuildPremiumTier = exports.GuildVerificationLevel = exports.GuildNSFWLevel = exports.GuildMFALevel = exports.GuildExplicitContentFilter = exports.GuildDefaultMessageNotifications = void 0;
+exports.MembershipScreeningFieldType = exports.GuildWidgetStyle = exports.IntegrationExpireBehavior = exports.GuildMemberFlags = exports.GuildFeature = exports.GuildSystemChannelFlags = exports.GuildHubType = exports.GuildPremiumTier = exports.GuildVerificationLevel = exports.GuildNSFWLevel = exports.GuildMFALevel = exports.GuildExplicitContentFilter = exports.GuildDefaultMessageNotifications = void 0;
 /**
  * https://discord.com/developers/docs/resources/guild#guild-object-default-message-notification-level
  */
@@ -3396,6 +4516,14 @@ var GuildSystemChannelFlags;
      * Hide member join sticker reply buttons
      */
     GuildSystemChannelFlags[GuildSystemChannelFlags["SuppressJoinNotificationReplies"] = 8] = "SuppressJoinNotificationReplies";
+    /**
+     * Suppress role subscription purchase and renewal notifications
+     */
+    GuildSystemChannelFlags[GuildSystemChannelFlags["SuppressRoleSubscriptionPurchaseNotifications"] = 16] = "SuppressRoleSubscriptionPurchaseNotifications";
+    /**
+     * Hide role subscription sticker reply buttons
+     */
+    GuildSystemChannelFlags[GuildSystemChannelFlags["SuppressRoleSubscriptionPurchaseNotificationReplies"] = 32] = "SuppressRoleSubscriptionPurchaseNotificationReplies";
 })(GuildSystemChannelFlags = exports.GuildSystemChannelFlags || (exports.GuildSystemChannelFlags = {}));
 /**
  * https://discord.com/developers/docs/resources/guild#guild-object-guild-features
@@ -3411,6 +4539,16 @@ var GuildFeature;
      */
     GuildFeature["AnimatedIcon"] = "ANIMATED_ICON";
     /**
+     * Guild is using the old permissions configuration behavior
+     *
+     * See https://discord.com/developers/docs/change-log#upcoming-application-command-permission-changes
+     */
+    GuildFeature["ApplicationCommandPermissionsV2"] = "APPLICATION_COMMAND_PERMISSIONS_V2";
+    /**
+     * Guild has set up auto moderation rules
+     */
+    GuildFeature["AutoModeration"] = "AUTO_MODERATION";
+    /**
      * Guild has access to set a guild banner image
      */
     GuildFeature["Banner"] = "BANNER";
@@ -3418,6 +4556,18 @@ var GuildFeature;
      * Guild can enable welcome screen, Membership Screening and discovery, and receives community updates
      */
     GuildFeature["Community"] = "COMMUNITY";
+    /**
+     * Guild has enabled monetization
+     */
+    GuildFeature["CreatorMonetizableProvisional"] = "CREATOR_MONETIZABLE_PROVISIONAL";
+    /**
+     * Guild has enabled the role subscription promo page
+     */
+    GuildFeature["CreatorStorePage"] = "CREATOR_STORE_PAGE";
+    /*
+     * Guild has been set as a support server on the App Directory
+     */
+    GuildFeature["DeveloperSupportServer"] = "DEVELOPER_SUPPORT_SERVER";
     /**
      * Guild is able to be discovered in the directory
      */
@@ -3433,7 +4583,7 @@ var GuildFeature;
     /**
      * Guild is a Student Hub
      *
-     * See https://support.discord.com/hc/en-us/articles/4406046651927-Discord-Student-Hubs-FAQ
+     * See https://support.discord.com/hc/articles/4406046651927
      *
      * @unstable This feature is currently not documented by Discord, but has known value
      */
@@ -3449,7 +4599,7 @@ var GuildFeature;
     /**
      * Guild is in a Student Hub
      *
-     * See https://support.discord.com/hc/en-us/articles/4406046651927-Discord-Student-Hubs-FAQ
+     * See https://support.discord.com/hc/articles/4406046651927
      *
      * @unstable This feature is currently not documented by Discord, but has known value
      */
@@ -3460,6 +4610,8 @@ var GuildFeature;
     GuildFeature["MemberVerificationGateEnabled"] = "MEMBER_VERIFICATION_GATE_ENABLED";
     /**
      * Guild has enabled monetization
+     *
+     * @unstable This feature is no longer documented by Discord
      */
     GuildFeature["MonetizationEnabled"] = "MONETIZATION_ENABLED";
     /**
@@ -3488,6 +4640,14 @@ var GuildFeature;
      */
     GuildFeature["RoleIcons"] = "ROLE_ICONS";
     /**
+     * Guild has role subscriptions that can be purchased
+     */
+    GuildFeature["RoleSubscriptionsAvailableForPurchase"] = "ROLE_SUBSCRIPTIONS_AVAILABLE_FOR_PURCHASE";
+    /**
+     * Guild has enabled role subscriptions
+     */
+    GuildFeature["RoleSubscriptionsEnabled"] = "ROLE_SUBSCRIPTIONS_ENABLED";
+    /**
      * Guild has enabled ticketed events
      */
     GuildFeature["TicketedEventsEnabled"] = "TICKETED_EVENTS_ENABLED";
@@ -3508,6 +4668,44 @@ var GuildFeature;
      */
     GuildFeature["WelcomeScreenEnabled"] = "WELCOME_SCREEN_ENABLED";
 })(GuildFeature = exports.GuildFeature || (exports.GuildFeature = {}));
+/**
+ * https://discord.com/developers/docs/resources/guild#guild-member-object-guild-member-flags
+ */
+var GuildMemberFlags;
+(function (GuildMemberFlags) {
+    /**
+     * Member has left and rejoined the guild
+     */
+    GuildMemberFlags[GuildMemberFlags["DidRejoin"] = 1] = "DidRejoin";
+    /**
+     * Member has completed onboarding
+     */
+    GuildMemberFlags[GuildMemberFlags["CompletedOnboarding"] = 2] = "CompletedOnboarding";
+    /**
+     * Member bypasses guild verification requirements
+     */
+    GuildMemberFlags[GuildMemberFlags["BypassesVerification"] = 4] = "BypassesVerification";
+    /**
+     * Member has started onboarding
+     */
+    GuildMemberFlags[GuildMemberFlags["StartedOnboarding"] = 8] = "StartedOnboarding";
+    /**
+     * @unstable This guild member flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    GuildMemberFlags[GuildMemberFlags["StartedHomeActions"] = 32] = "StartedHomeActions";
+    /**
+     * @unstable This guild member flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    GuildMemberFlags[GuildMemberFlags["CompletedHomeActions"] = 64] = "CompletedHomeActions";
+    /**
+     * @unstable This guild member flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    GuildMemberFlags[GuildMemberFlags["AutomodQuarantinedUsernameOrGuildNickname"] = 128] = "AutomodQuarantinedUsernameOrGuildNickname";
+    /**
+     * @unstable This guild member flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    GuildMemberFlags[GuildMemberFlags["AutomodQuarantinedBio"] = 256] = "AutomodQuarantinedBio";
+})(GuildMemberFlags = exports.GuildMemberFlags || (exports.GuildMemberFlags = {}));
 /**
  * https://discord.com/developers/docs/resources/guild#integration-object-integration-expire-behaviors
  */
@@ -3617,6 +4815,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 __exportStar(__nccwpck_require__(8908), exports);
 __exportStar(__nccwpck_require__(2613), exports);
 __exportStar(__nccwpck_require__(5057), exports);
+__exportStar(__nccwpck_require__(8933), exports);
 __exportStar(__nccwpck_require__(4804), exports);
 __exportStar(__nccwpck_require__(6114), exports);
 __exportStar(__nccwpck_require__(2454), exports);
@@ -3761,6 +4960,10 @@ var OAuth2Scopes;
      */
     OAuth2Scopes["MessagesRead"] = "messages.read";
     /**
+     * Allows your app to update a user's connection and metadata for the app
+     */
+    OAuth2Scopes["RoleConnectionsWrite"] = "role_connections.write";
+    /**
      * For local rpc server access, this allows you to control a user's local Discord client - requires Discord approval
      */
     OAuth2Scopes["RPC"] = "rpc";
@@ -3887,7 +5090,7 @@ var StickerType;
      */
     StickerType[StickerType["Standard"] = 1] = "Standard";
     /**
-     * A sticker uploaded to a Boosted guild for the guild's members
+     * A sticker uploaded to a guild for the guild's members
      */
     StickerType[StickerType["Guild"] = 2] = "Guild";
 })(StickerType = exports.StickerType || (exports.StickerType = {}));
@@ -3899,6 +5102,7 @@ var StickerFormatType;
     StickerFormatType[StickerFormatType["PNG"] = 1] = "PNG";
     StickerFormatType[StickerFormatType["APNG"] = 2] = "APNG";
     StickerFormatType[StickerFormatType["Lottie"] = 3] = "Lottie";
+    StickerFormatType[StickerFormatType["GIF"] = 4] = "GIF";
 })(StickerFormatType = exports.StickerFormatType || (exports.StickerFormatType = {}));
 //# sourceMappingURL=sticker.js.map
 
@@ -3971,6 +5175,14 @@ var UserFlags;
      */
     UserFlags[UserFlags["BugHunterLevel1"] = 8] = "BugHunterLevel1";
     /**
+     * @unstable This user flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    UserFlags[UserFlags["MFASMS"] = 16] = "MFASMS";
+    /**
+     * @unstable This user flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    UserFlags[UserFlags["PremiumPromoDismissed"] = 32] = "PremiumPromoDismissed";
+    /**
      * House Bravery Member
      */
     UserFlags[UserFlags["HypeSquadOnlineHouse1"] = 64] = "HypeSquadOnlineHouse1";
@@ -3991,6 +5203,10 @@ var UserFlags;
      */
     UserFlags[UserFlags["TeamPseudoUser"] = 1024] = "TeamPseudoUser";
     /**
+     * @unstable This user flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     */
+    UserFlags[UserFlags["HasUnreadUrgentMessages"] = 8192] = "HasUnreadUrgentMessages";
+    /**
      * Bug Hunter Level 2
      */
     UserFlags[UserFlags["BugHunterLevel2"] = 16384] = "BugHunterLevel2";
@@ -4003,7 +5219,7 @@ var UserFlags;
      */
     UserFlags[UserFlags["VerifiedDeveloper"] = 131072] = "VerifiedDeveloper";
     /**
-     * Discord Certified Moderator
+     * Moderator Programs Alumni
      */
     UserFlags[UserFlags["CertifiedModerator"] = 262144] = "CertifiedModerator";
     /**
@@ -4017,11 +5233,36 @@ var UserFlags;
      */
     UserFlags[UserFlags["Spammer"] = 1048576] = "Spammer";
     /**
-     * User's account has been quarantined based on recent activity
-     *
      * @unstable This user flag is currently not documented by Discord but has a known value which we will try to keep up to date.
      */
-    UserFlags[UserFlags["Quarantined"] = Math.pow(2, 44)] = "Quarantined";
+    UserFlags[UserFlags["DisablePremium"] = 2097152] = "DisablePremium";
+    /**
+     * User is an [Active Developer](https://support-dev.discord.com/hc/articles/10113997751447)
+     */
+    UserFlags[UserFlags["ActiveDeveloper"] = 4194304] = "ActiveDeveloper";
+    /**
+     * User's account has been [quarantined](https://support.discord.com/hc/articles/6461420677527) based on recent activity
+     *
+     * @unstable This user flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     * @privateRemarks
+     *
+     * This value would be 1 << 44, but bit shifting above 1 << 30 requires bigints
+     */
+    UserFlags[UserFlags["Quarantined"] = 17592186044416] = "Quarantined";
+    /**
+     * @unstable This user flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     * @privateRemarks
+     *
+     * This value would be 1 << 50, but bit shifting above 1 << 30 requires bigints
+     */
+    UserFlags[UserFlags["Collaborator"] = 1125899906842624] = "Collaborator";
+    /**
+     * @unstable This user flag is currently not documented by Discord but has a known value which we will try to keep up to date.
+     * @privateRemarks
+     *
+     * This value would be 1 << 51, but bit shifting above 1 << 30 requires bigints
+     */
+    UserFlags[UserFlags["RestrictedCollaborator"] = 2251799813685248] = "RestrictedCollaborator";
 })(UserFlags = exports.UserFlags || (exports.UserFlags = {}));
 /**
  * https://discord.com/developers/docs/resources/user#user-object-premium-types
@@ -4031,6 +5272,7 @@ var UserPremiumType;
     UserPremiumType[UserPremiumType["None"] = 0] = "None";
     UserPremiumType[UserPremiumType["NitroClassic"] = 1] = "NitroClassic";
     UserPremiumType[UserPremiumType["Nitro"] = 2] = "Nitro";
+    UserPremiumType[UserPremiumType["NitroBasic"] = 3] = "NitroBasic";
 })(UserPremiumType = exports.UserPremiumType || (exports.UserPremiumType = {}));
 var ConnectionService;
 (function (ConnectionService) {
@@ -4039,6 +5281,7 @@ var ConnectionService;
     ConnectionService["EpicGames"] = "epicgames";
     ConnectionService["Facebook"] = "facebook";
     ConnectionService["GitHub"] = "github";
+    ConnectionService["Instagram"] = "instagram";
     ConnectionService["LeagueOfLegends"] = "leagueoflegends";
     ConnectionService["PayPal"] = "paypal";
     ConnectionService["PlayStationNetwork"] = "playstation";
@@ -4047,6 +5290,7 @@ var ConnectionService;
     ConnectionService["Spotify"] = "spotify";
     ConnectionService["Skype"] = "skype";
     ConnectionService["Steam"] = "steam";
+    ConnectionService["TikTok"] = "tiktok";
     ConnectionService["Twitch"] = "twitch";
     ConnectionService["Twitter"] = "twitter";
     ConnectionService["Xbox"] = "xbox";
@@ -4185,6 +5429,7 @@ var RESTJSONErrorCodes;
     RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfWebhooksReached"] = 30007] = "MaximumNumberOfWebhooksReached";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfEmojisReached"] = 30008] = "MaximumNumberOfEmojisReached";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfReactionsReached"] = 30010] = "MaximumNumberOfReactionsReached";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfGroupDMsReached"] = 30011] = "MaximumNumberOfGroupDMsReached";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfGuildChannelsReached"] = 30013] = "MaximumNumberOfGuildChannelsReached";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfAttachmentsInAMessageReached"] = 30015] = "MaximumNumberOfAttachmentsInAMessageReached";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfInvitesReached"] = 30016] = "MaximumNumberOfInvitesReached";
@@ -4205,6 +5450,10 @@ var RESTJSONErrorCodes;
     RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfPinnedThreadsInForumHasBeenReached"] = 30047] = "MaximumNumberOfPinnedThreadsInForumHasBeenReached";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfTagsInForumHasBeenReached"] = 30048] = "MaximumNumberOfTagsInForumHasBeenReached";
     RESTJSONErrorCodes[RESTJSONErrorCodes["BitrateIsTooHighForChannelOfThisType"] = 30052] = "BitrateIsTooHighForChannelOfThisType";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfPremiumEmojisReached"] = 30056] = "MaximumNumberOfPremiumEmojisReached";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfWebhooksPerGuildReached"] = 30058] = "MaximumNumberOfWebhooksPerGuildReached";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["MaximumNumberOfChannelPermissionOverwritesReached"] = 30060] = "MaximumNumberOfChannelPermissionOverwritesReached";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["TheChannelsForThisGuildAreTooLarge"] = 30061] = "TheChannelsForThisGuildAreTooLarge";
     RESTJSONErrorCodes[RESTJSONErrorCodes["Unauthorized"] = 40001] = "Unauthorized";
     RESTJSONErrorCodes[RESTJSONErrorCodes["VerifyYourAccount"] = 40002] = "VerifyYourAccount";
     RESTJSONErrorCodes[RESTJSONErrorCodes["OpeningDirectMessagesTooFast"] = 40003] = "OpeningDirectMessagesTooFast";
@@ -4217,8 +5466,12 @@ var RESTJSONErrorCodes;
     RESTJSONErrorCodes[RESTJSONErrorCodes["ThisMessageWasAlreadyCrossposted"] = 40033] = "ThisMessageWasAlreadyCrossposted";
     RESTJSONErrorCodes[RESTJSONErrorCodes["ApplicationCommandWithThatNameAlreadyExists"] = 40041] = "ApplicationCommandWithThatNameAlreadyExists";
     RESTJSONErrorCodes[RESTJSONErrorCodes["ApplicationInteractionFailedToSend"] = 40043] = "ApplicationInteractionFailedToSend";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["CannotSendAMessageInAForumChannel"] = 40058] = "CannotSendAMessageInAForumChannel";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InteractionHasAlreadyBeenAcknowledged"] = 40060] = "InteractionHasAlreadyBeenAcknowledged";
     RESTJSONErrorCodes[RESTJSONErrorCodes["TagNamesMustBeUnique"] = 40061] = "TagNamesMustBeUnique";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["ServiceResourceIsBeingRateLimited"] = 40062] = "ServiceResourceIsBeingRateLimited";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["ThereAreNoTagsAvailableThatCanBeSetByNonModerators"] = 40066] = "ThereAreNoTagsAvailableThatCanBeSetByNonModerators";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["TagRequiredToCreateAForumPostInThisChannel"] = 40067] = "TagRequiredToCreateAForumPostInThisChannel";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MissingAccess"] = 50001] = "MissingAccess";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidAccountType"] = 50002] = "InvalidAccountType";
     RESTJSONErrorCodes[RESTJSONErrorCodes["CannotExecuteActionOnDMChannel"] = 50003] = "CannotExecuteActionOnDMChannel";
@@ -4248,13 +5501,16 @@ var RESTJSONErrorCodes;
     RESTJSONErrorCodes[RESTJSONErrorCodes["OneOfTheMessagesProvidedWasTooOldForBulkDelete"] = 50034] = "OneOfTheMessagesProvidedWasTooOldForBulkDelete";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidFormBodyOrContentType"] = 50035] = "InvalidFormBodyOrContentType";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InviteAcceptedToGuildWithoutTheBotBeingIn"] = 50036] = "InviteAcceptedToGuildWithoutTheBotBeingIn";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidActivityAction"] = 50039] = "InvalidActivityAction";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidAPIVersion"] = 50041] = "InvalidAPIVersion";
     RESTJSONErrorCodes[RESTJSONErrorCodes["FileUploadedExceedsMaximumSize"] = 50045] = "FileUploadedExceedsMaximumSize";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidFileUploaded"] = 50046] = "InvalidFileUploaded";
     RESTJSONErrorCodes[RESTJSONErrorCodes["CannotSelfRedeemThisGift"] = 50054] = "CannotSelfRedeemThisGift";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidGuild"] = 50055] = "InvalidGuild";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidRequestOrigin"] = 50067] = "InvalidRequestOrigin";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidMessageType"] = 50068] = "InvalidMessageType";
     RESTJSONErrorCodes[RESTJSONErrorCodes["PaymentSourceRequiredToRedeemGift"] = 50070] = "PaymentSourceRequiredToRedeemGift";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["CannotModifyASystemWebhook"] = 50073] = "CannotModifyASystemWebhook";
     RESTJSONErrorCodes[RESTJSONErrorCodes["CannotDeleteChannelRequiredForCommunityGuilds"] = 50074] = "CannotDeleteChannelRequiredForCommunityGuilds";
     RESTJSONErrorCodes[RESTJSONErrorCodes["CannotEditStickersWithinMessage"] = 50080] = "CannotEditStickersWithinMessage";
     RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidStickerSent"] = 50081] = "InvalidStickerSent";
@@ -4262,13 +5518,23 @@ var RESTJSONErrorCodes;
     RESTJSONErrorCodes[RESTJSONErrorCodes["InvalidThreadNotificationSettings"] = 50084] = "InvalidThreadNotificationSettings";
     RESTJSONErrorCodes[RESTJSONErrorCodes["ParameterEarlierThanCreation"] = 50085] = "ParameterEarlierThanCreation";
     RESTJSONErrorCodes[RESTJSONErrorCodes["CommunityServerChannelsMustBeTextChannels"] = 50086] = "CommunityServerChannelsMustBeTextChannels";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["TheEntityTypeOfTheEventIsDifferentFromTheEntityYouAreTryingToStartTheEventFor"] = 50091] = "TheEntityTypeOfTheEventIsDifferentFromTheEntityYouAreTryingToStartTheEventFor";
     RESTJSONErrorCodes[RESTJSONErrorCodes["ServerNotAvailableInYourLocation"] = 50095] = "ServerNotAvailableInYourLocation";
     RESTJSONErrorCodes[RESTJSONErrorCodes["ServerNeedsMonetizationEnabledToPerformThisAction"] = 50097] = "ServerNeedsMonetizationEnabledToPerformThisAction";
     RESTJSONErrorCodes[RESTJSONErrorCodes["ServerNeedsMoreBoostsToPerformThisAction"] = 50101] = "ServerNeedsMoreBoostsToPerformThisAction";
     RESTJSONErrorCodes[RESTJSONErrorCodes["RequestBodyContainsInvalidJSON"] = 50109] = "RequestBodyContainsInvalidJSON";
     RESTJSONErrorCodes[RESTJSONErrorCodes["OwnershipCannotBeMovedToABotUser"] = 50132] = "OwnershipCannotBeMovedToABotUser";
     RESTJSONErrorCodes[RESTJSONErrorCodes["FailedToResizeAssetBelowTheMinimumSize"] = 50138] = "FailedToResizeAssetBelowTheMinimumSize";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["CannotMixSubscriptionAndNonSubscriptionRolesForAnEmoji"] = 50144] = "CannotMixSubscriptionAndNonSubscriptionRolesForAnEmoji";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["CannotConvertBetweenPremiumEmojiAndNormalEmoji"] = 50145] = "CannotConvertBetweenPremiumEmojiAndNormalEmoji";
     RESTJSONErrorCodes[RESTJSONErrorCodes["UploadedFileNotFound"] = 50146] = "UploadedFileNotFound";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["VoiceMessagesDoNotSupportAdditionalContent"] = 50159] = "VoiceMessagesDoNotSupportAdditionalContent";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["VoiceMessagesMustHaveASingleAudioAttachment"] = 50160] = "VoiceMessagesMustHaveASingleAudioAttachment";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["VoiceMessagesMustHaveSupportingMetadata"] = 50161] = "VoiceMessagesMustHaveSupportingMetadata";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["VoiceMessagesCannotBeEdited"] = 50162] = "VoiceMessagesCannotBeEdited";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["CannotDeleteGuildSubscriptionIntegration"] = 50163] = "CannotDeleteGuildSubscriptionIntegration";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["YouCannotSendVoiceMessagesInThisChannel"] = 50173] = "YouCannotSendVoiceMessagesInThisChannel";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["TheUserAccountMustFirstBeVerified"] = 50178] = "TheUserAccountMustFirstBeVerified";
     RESTJSONErrorCodes[RESTJSONErrorCodes["YouDoNotHavePermissionToSendThisSticker"] = 50600] = "YouDoNotHavePermissionToSendThisSticker";
     RESTJSONErrorCodes[RESTJSONErrorCodes["TwoFactorAuthenticationIsRequired"] = 60003] = "TwoFactorAuthenticationIsRequired";
     RESTJSONErrorCodes[RESTJSONErrorCodes["NoUsersWithDiscordTagExist"] = 80004] = "NoUsersWithDiscordTagExist";
@@ -4292,7 +5558,10 @@ var RESTJSONErrorCodes;
     RESTJSONErrorCodes[RESTJSONErrorCodes["FailedToCreateStageNeededForStageEvent"] = 180002] = "FailedToCreateStageNeededForStageEvent";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MessageWasBlockedByAutomaticModeration"] = 200000] = "MessageWasBlockedByAutomaticModeration";
     RESTJSONErrorCodes[RESTJSONErrorCodes["TitleWasBlockedByAutomaticModeration"] = 200001] = "TitleWasBlockedByAutomaticModeration";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["WebhooksPostedToForumChannelsMustHaveAThreadNameOrThreadId"] = 220001] = "WebhooksPostedToForumChannelsMustHaveAThreadNameOrThreadId";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["WebhooksPostedToForumChannelsCannotHaveBothAThreadNameAndThreadId"] = 220002] = "WebhooksPostedToForumChannelsCannotHaveBothAThreadNameAndThreadId";
     RESTJSONErrorCodes[RESTJSONErrorCodes["WebhooksCanOnlyCreateThreadsInForumChannels"] = 220003] = "WebhooksCanOnlyCreateThreadsInForumChannels";
+    RESTJSONErrorCodes[RESTJSONErrorCodes["WebhookServicesCannotBeUsedInForumChannels"] = 220004] = "WebhookServicesCannotBeUsedInForumChannels";
     RESTJSONErrorCodes[RESTJSONErrorCodes["MessageBlockedByHarmfulLinksFilter"] = 240000] = "MessageBlockedByHarmfulLinksFilter";
 })(RESTJSONErrorCodes = exports.RESTJSONErrorCodes || (exports.RESTJSONErrorCodes = {}));
 /**
@@ -4300,6 +5569,7 @@ var RESTJSONErrorCodes;
  */
 var Locale;
 (function (Locale) {
+    Locale["Indonesian"] = "id";
     Locale["EnglishUS"] = "en-US";
     Locale["EnglishGB"] = "en-GB";
     Locale["Bulgarian"] = "bg";
@@ -4335,6 +5605,16 @@ var Locale;
 
 /***/ }),
 
+/***/ 2624:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=application.js.map
+
+/***/ }),
+
 /***/ 397:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -4342,6 +5622,16 @@ var Locale;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 //# sourceMappingURL=auditLog.js.map
+
+/***/ }),
+
+/***/ 7850:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+//# sourceMappingURL=autoModeration.js.map
 
 /***/ }),
 
@@ -4417,7 +5707,9 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.OAuth2Routes = exports.RouteBases = exports.ImageFormat = exports.CDNRoutes = exports.StickerPackApplicationId = exports.Routes = exports.APIVersion = void 0;
 __exportStar(__nccwpck_require__(3138), exports);
+__exportStar(__nccwpck_require__(2624), exports);
 __exportStar(__nccwpck_require__(397), exports);
+__exportStar(__nccwpck_require__(7850), exports);
 __exportStar(__nccwpck_require__(8239), exports);
 __exportStar(__nccwpck_require__(1166), exports);
 __exportStar(__nccwpck_require__(3261), exports);
@@ -4434,6 +5726,31 @@ __exportStar(__nccwpck_require__(6445), exports);
 __exportStar(__nccwpck_require__(3503), exports);
 exports.APIVersion = '10';
 exports.Routes = {
+    /**
+     * Route for:
+     * - GET `/applications/{application.id}/role-connections/metadata`
+     * - PUT `/applications/{application.id}/role-connections/metadata`
+     */
+    applicationRoleConnectionMetadata(applicationId) {
+        return `/applications/${applicationId}/role-connections/metadata`;
+    },
+    /**
+     * Route for:
+     * - GET  `/guilds/{guild.id}/auto-moderation/rules`
+     * - POST `/guilds/{guild.id}/auto-moderation/rules`
+     */
+    guildAutoModerationRules(guildId) {
+        return `/guilds/${guildId}/auto-moderation/rules`;
+    },
+    /**
+     * Routes for:
+     * - GET    `/guilds/{guild.id}/auto-moderation/rules/{rule.id}`
+     * - PATCH  `/guilds/{guild.id}/auto-moderation/rules/{rule.id}`
+     * - DELETE `/guilds/{guild.id}/auto-moderation/rules/{rule.id}`
+     */
+    guildAutoModerationRule(guildId, ruleId) {
+        return `/guilds/${guildId}/auto-moderation/rules/${ruleId}`;
+    },
     /**
      * Route for:
      * - GET `/guilds/{guild.id}/audit-logs`
@@ -4647,6 +5964,7 @@ exports.Routes = {
     /**
      * Route for:
      * - PATCH `/guilds/{guild.id}/members/@me/nick`
+     *
      * @deprecated Use {@link Routes.guildMember} instead.
      */
     guildCurrentMemberNickname(guildId) {
@@ -4853,10 +6171,18 @@ exports.Routes = {
      * - GET   `/users/{user.id}`
      * - PATCH `/users/@me`
      *
-     * @param [userId='@me'] The user ID, defaulted to `@me`
+     * @param [userId] The user ID, defaulted to `@me`
      */
     user(userId = '@me') {
         return `/users/${userId}`;
+    },
+    /**
+     * Route for:
+     * - GET `/users/@me/applications/{application.id}/role-connection`
+     * - PUT `/users/@me/applications/{application.id}/role-connection`
+     */
+    userApplicationRoleConnection(applicationId) {
+        return `/users/@me/applications/${applicationId}/role-connection`;
     },
     /**
      * Route for:
@@ -4945,8 +6271,6 @@ exports.Routes = {
      * - PATCH  `/webhooks/{application.id}/{interaction.token}/messages/@original`
      * - PATCH  `/webhooks/{application.id}/{interaction.token}/messages/{message.id}`
      * - DELETE `/webhooks/{application.id}/{interaction.token}/messages/{message.id}`
-     *
-     * @param [messageId='@original'] The message ID to change, defaulted to `@original`
      */
     webhookMessage(webhookId, webhookToken, messageId = '@original') {
         return `/webhooks/${webhookId}/${webhookToken}/messages/${messageId}`;
@@ -5280,12 +6604,12 @@ exports.CDNRoutes = {
     },
     /**
      * Route for:
-     * - GET `/app-icons/{application.id}/{application.asset_id}.{png|jpeg|webp}`
+     * - GET `/app-assets/{application.id}/{application.asset_id}.{png|jpeg|webp}`
      *
      * This route supports the extensions: PNG, JPEG, WebP
      */
     applicationAsset(applicationId, applicationAssetId, format) {
-        return `/app-icons/${applicationId}/${applicationAssetId}.${format}`;
+        return `/app-assets/${applicationId}/${applicationAssetId}.${format}`;
     },
     /**
      * Route for:
@@ -5307,6 +6631,15 @@ exports.CDNRoutes = {
     },
     /**
      * Route for:
+     * - GET `/app-assets/${application.id}/store/${asset.id}.{png|jpeg|webp}}`
+     *
+     * This route supports the extensions: PNG, JPEG, WebP
+     */
+    storePageAsset(applicationId, assetId) {
+        return `/app-assets/${applicationId}/store/${assetId}.png`;
+    },
+    /**
+     * Route for:
      * - GET `team-icons/{team.id}/{team.icon}.{png|jpeg|webp}`
      *
      * This route supports the extensions: PNG, JPEG, WebP
@@ -5318,7 +6651,7 @@ exports.CDNRoutes = {
      * Route for:
      * - GET `/stickers/{sticker.id}.{png|json}`
      *
-     * This route supports the extensions: PNG, Lottie
+     * This route supports the extensions: PNG, Lottie, GIF
      */
     sticker(stickerId, format) {
         return `/stickers/${stickerId}.${format}`;
@@ -5554,6 +6887,7 @@ const index_1 = __nccwpck_require__(311);
 // Interactions
 /**
  * A type-guard check for DM interactions
+ *
  * @param interaction The interaction to check against
  * @returns A boolean that indicates if the interaction was received in a DM channel
  */
@@ -5563,6 +6897,7 @@ function isDMInteraction(interaction) {
 exports.isDMInteraction = isDMInteraction;
 /**
  * A type-guard check for guild interactions
+ *
  * @param interaction The interaction to check against
  * @returns A boolean that indicates if the interaction was received in a guild
  */
@@ -5573,6 +6908,7 @@ exports.isGuildInteraction = isGuildInteraction;
 // ApplicationCommandInteractions
 /**
  * A type-guard check for DM application command interactions
+ *
  * @param interaction The application command interaction to check against
  * @returns A boolean that indicates if the application command interaction was received in a DM channel
  */
@@ -5582,6 +6918,7 @@ function isApplicationCommandDMInteraction(interaction) {
 exports.isApplicationCommandDMInteraction = isApplicationCommandDMInteraction;
 /**
  * A type-guard check for guild application command interactions
+ *
  * @param interaction The interaction to check against
  * @returns A boolean that indicates if the application command interaction was received in a guild
  */
@@ -5592,6 +6929,7 @@ exports.isApplicationCommandGuildInteraction = isApplicationCommandGuildInteract
 // MessageComponentInteractions
 /**
  * A type-guard check for DM message component interactions
+ *
  * @param interaction The message component interaction to check against
  * @returns A boolean that indicates if the message component interaction was received in a DM channel
  */
@@ -5601,6 +6939,7 @@ function isMessageComponentDMInteraction(interaction) {
 exports.isMessageComponentDMInteraction = isMessageComponentDMInteraction;
 /**
  * A type-guard check for guild message component interactions
+ *
  * @param interaction The interaction to check against
  * @returns A boolean that indicates if the message component interaction was received in a guild
  */
@@ -5611,6 +6950,7 @@ exports.isMessageComponentGuildInteraction = isMessageComponentGuildInteraction;
 // Buttons
 /**
  * A type-guard check for buttons that have a `url` attached to them.
+ *
  * @param component The button to check against
  * @returns A boolean that indicates if the button has a `url` attached to it
  */
@@ -5620,7 +6960,8 @@ function isLinkButton(component) {
 exports.isLinkButton = isLinkButton;
 /**
  * A type-guard check for buttons that have a `custom_id` attached to them.
- * @param button The button to check against
+ *
+ * @param component The button to check against
  * @returns A boolean that indicates if the button has a `custom_id` attached to it
  */
 function isInteractionButton(component) {
@@ -5630,6 +6971,7 @@ exports.isInteractionButton = isInteractionButton;
 // Message Components
 /**
  * A type-guard check for message component interactions
+ *
  * @param interaction The interaction to check against
  * @returns A boolean that indicates if the interaction is a message component
  */
@@ -5639,6 +6981,7 @@ function isMessageComponentInteraction(interaction) {
 exports.isMessageComponentInteraction = isMessageComponentInteraction;
 /**
  * A type-guard check for button message component interactions
+ *
  * @param interaction The message component interaction to check against
  * @returns A boolean that indicates if the message component is a button
  */
@@ -5648,16 +6991,24 @@ function isMessageComponentButtonInteraction(interaction) {
 exports.isMessageComponentButtonInteraction = isMessageComponentButtonInteraction;
 /**
  * A type-guard check for select menu message component interactions
+ *
  * @param interaction The message component interaction to check against
  * @returns A boolean that indicates if the message component is a select menu
  */
 function isMessageComponentSelectMenuInteraction(interaction) {
-    return interaction.data.component_type === index_1.ComponentType.SelectMenu;
+    return [
+        index_1.ComponentType.StringSelect,
+        index_1.ComponentType.UserSelect,
+        index_1.ComponentType.RoleSelect,
+        index_1.ComponentType.MentionableSelect,
+        index_1.ComponentType.ChannelSelect,
+    ].includes(interaction.data.component_type);
 }
 exports.isMessageComponentSelectMenuInteraction = isMessageComponentSelectMenuInteraction;
 // Application Commands
 /**
  * A type-guard check for chat input application commands.
+ *
  * @param interaction The interaction to check against
  * @returns A boolean that indicates if the interaction is a chat input application command
  */
@@ -5667,6 +7018,7 @@ function isChatInputApplicationCommandInteraction(interaction) {
 exports.isChatInputApplicationCommandInteraction = isChatInputApplicationCommandInteraction;
 /**
  * A type-guard check for context menu application commands.
+ *
  * @param interaction The interaction to check against
  * @returns A boolean that indicates if the interaction is a context menu application command
  */
@@ -10997,379 +12349,6 @@ module.exports = require("worker_threads");
 
 /***/ }),
 
-/***/ 1125:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-class Collection extends Map {
-  ensure(key, defaultValueGenerator) {
-    if (this.has(key))
-      return this.get(key);
-    if (typeof defaultValueGenerator !== "function")
-      throw new TypeError(`${defaultValueGenerator} is not a function`);
-    const defaultValue = defaultValueGenerator(key, this);
-    this.set(key, defaultValue);
-    return defaultValue;
-  }
-  hasAll(...keys) {
-    return keys.every((k) => super.has(k));
-  }
-  hasAny(...keys) {
-    return keys.some((k) => super.has(k));
-  }
-  first(amount) {
-    if (typeof amount === "undefined")
-      return this.values().next().value;
-    if (amount < 0)
-      return this.last(amount * -1);
-    amount = Math.min(this.size, amount);
-    const iter = this.values();
-    return Array.from({ length: amount }, () => iter.next().value);
-  }
-  firstKey(amount) {
-    if (typeof amount === "undefined")
-      return this.keys().next().value;
-    if (amount < 0)
-      return this.lastKey(amount * -1);
-    amount = Math.min(this.size, amount);
-    const iter = this.keys();
-    return Array.from({ length: amount }, () => iter.next().value);
-  }
-  last(amount) {
-    const arr = [...this.values()];
-    if (typeof amount === "undefined")
-      return arr[arr.length - 1];
-    if (amount < 0)
-      return this.first(amount * -1);
-    if (!amount)
-      return [];
-    return arr.slice(-amount);
-  }
-  lastKey(amount) {
-    const arr = [...this.keys()];
-    if (typeof amount === "undefined")
-      return arr[arr.length - 1];
-    if (amount < 0)
-      return this.firstKey(amount * -1);
-    if (!amount)
-      return [];
-    return arr.slice(-amount);
-  }
-  at(index) {
-    index = Math.floor(index);
-    const arr = [...this.values()];
-    return arr.at(index);
-  }
-  keyAt(index) {
-    index = Math.floor(index);
-    const arr = [...this.keys()];
-    return arr.at(index);
-  }
-  random(amount) {
-    const arr = [...this.values()];
-    if (typeof amount === "undefined")
-      return arr[Math.floor(Math.random() * arr.length)];
-    if (!arr.length || !amount)
-      return [];
-    return Array.from(
-      { length: Math.min(amount, arr.length) },
-      () => arr.splice(Math.floor(Math.random() * arr.length), 1)[0]
-    );
-  }
-  randomKey(amount) {
-    const arr = [...this.keys()];
-    if (typeof amount === "undefined")
-      return arr[Math.floor(Math.random() * arr.length)];
-    if (!arr.length || !amount)
-      return [];
-    return Array.from(
-      { length: Math.min(amount, arr.length) },
-      () => arr.splice(Math.floor(Math.random() * arr.length), 1)[0]
-    );
-  }
-  reverse() {
-    const entries = [...this.entries()].reverse();
-    this.clear();
-    for (const [key, value] of entries)
-      this.set(key, value);
-    return this;
-  }
-  find(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    for (const [key, val] of this) {
-      if (fn(val, key, this))
-        return val;
-    }
-    return void 0;
-  }
-  findKey(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    for (const [key, val] of this) {
-      if (fn(val, key, this))
-        return key;
-    }
-    return void 0;
-  }
-  sweep(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    const previousSize = this.size;
-    for (const [key, val] of this) {
-      if (fn(val, key, this))
-        this.delete(key);
-    }
-    return previousSize - this.size;
-  }
-  filter(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    const results = new this.constructor[Symbol.species]();
-    for (const [key, val] of this) {
-      if (fn(val, key, this))
-        results.set(key, val);
-    }
-    return results;
-  }
-  partition(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    const results = [
-      new this.constructor[Symbol.species](),
-      new this.constructor[Symbol.species]()
-    ];
-    for (const [key, val] of this) {
-      if (fn(val, key, this)) {
-        results[0].set(key, val);
-      } else {
-        results[1].set(key, val);
-      }
-    }
-    return results;
-  }
-  flatMap(fn, thisArg) {
-    const collections = this.map(fn, thisArg);
-    return new this.constructor[Symbol.species]().concat(...collections);
-  }
-  map(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    const iter = this.entries();
-    return Array.from({ length: this.size }, () => {
-      const [key, value] = iter.next().value;
-      return fn(value, key, this);
-    });
-  }
-  mapValues(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    const coll = new this.constructor[Symbol.species]();
-    for (const [key, val] of this)
-      coll.set(key, fn(val, key, this));
-    return coll;
-  }
-  some(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    for (const [key, val] of this) {
-      if (fn(val, key, this))
-        return true;
-    }
-    return false;
-  }
-  every(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    for (const [key, val] of this) {
-      if (!fn(val, key, this))
-        return false;
-    }
-    return true;
-  }
-  reduce(fn, initialValue) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    let accumulator;
-    if (typeof initialValue !== "undefined") {
-      accumulator = initialValue;
-      for (const [key, val] of this)
-        accumulator = fn(accumulator, val, key, this);
-      return accumulator;
-    }
-    let first = true;
-    for (const [key, val] of this) {
-      if (first) {
-        accumulator = val;
-        first = false;
-        continue;
-      }
-      accumulator = fn(accumulator, val, key, this);
-    }
-    if (first) {
-      throw new TypeError("Reduce of empty collection with no initial value");
-    }
-    return accumulator;
-  }
-  each(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    this.forEach(fn, thisArg);
-    return this;
-  }
-  tap(fn, thisArg) {
-    if (typeof fn !== "function")
-      throw new TypeError(`${fn} is not a function`);
-    if (typeof thisArg !== "undefined")
-      fn = fn.bind(thisArg);
-    fn(this);
-    return this;
-  }
-  clone() {
-    return new this.constructor[Symbol.species](this);
-  }
-  concat(...collections) {
-    const newColl = this.clone();
-    for (const coll of collections) {
-      for (const [key, val] of coll)
-        newColl.set(key, val);
-    }
-    return newColl;
-  }
-  equals(collection) {
-    if (!collection)
-      return false;
-    if (this === collection)
-      return true;
-    if (this.size !== collection.size)
-      return false;
-    for (const [key, value] of this) {
-      if (!collection.has(key) || value !== collection.get(key)) {
-        return false;
-      }
-    }
-    return true;
-  }
-  sort(compareFunction = Collection.defaultSort) {
-    const entries = [...this.entries()];
-    entries.sort((a, b) => compareFunction(a[1], b[1], a[0], b[0]));
-    super.clear();
-    for (const [k, v] of entries) {
-      super.set(k, v);
-    }
-    return this;
-  }
-  intersect(other) {
-    const coll = new this.constructor[Symbol.species]();
-    for (const [k, v] of other) {
-      if (this.has(k) && Object.is(v, this.get(k))) {
-        coll.set(k, v);
-      }
-    }
-    return coll;
-  }
-  difference(other) {
-    const coll = new this.constructor[Symbol.species]();
-    for (const [k, v] of other) {
-      if (!this.has(k))
-        coll.set(k, v);
-    }
-    for (const [k, v] of this) {
-      if (!other.has(k))
-        coll.set(k, v);
-    }
-    return coll;
-  }
-  merge(other, whenInSelf, whenInOther, whenInBoth) {
-    const coll = new this.constructor[Symbol.species]();
-    const keys = /* @__PURE__ */ new Set([...this.keys(), ...other.keys()]);
-    for (const k of keys) {
-      const hasInSelf = this.has(k);
-      const hasInOther = other.has(k);
-      if (hasInSelf && hasInOther) {
-        const r = whenInBoth(this.get(k), other.get(k), k);
-        if (r.keep)
-          coll.set(k, r.value);
-      } else if (hasInSelf) {
-        const r = whenInSelf(this.get(k), k);
-        if (r.keep)
-          coll.set(k, r.value);
-      } else if (hasInOther) {
-        const r = whenInOther(other.get(k), k);
-        if (r.keep)
-          coll.set(k, r.value);
-      }
-    }
-    return coll;
-  }
-  sorted(compareFunction = Collection.defaultSort) {
-    return new this.constructor[Symbol.species](this).sort((av, bv, ak, bk) => compareFunction(av, bv, ak, bk));
-  }
-  toJSON() {
-    return [...this.values()];
-  }
-  static defaultSort(firstValue, secondValue) {
-    return Number(firstValue > secondValue) || Number(firstValue === secondValue) - 1;
-  }
-  static combineEntries(entries, combine) {
-    const coll = new Collection();
-    for (const [k, v] of entries) {
-      if (coll.has(k)) {
-        coll.set(k, combine(coll.get(k), v, k));
-      } else {
-        coll.set(k, v);
-      }
-    }
-    return coll;
-  }
-}
-
-exports.Collection = Collection;
-//# sourceMappingURL=collection.cjs.map
-
-
-/***/ }),
-
-/***/ 4277:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-const collection = __nccwpck_require__(1125);
-
-
-
-exports.Collection = collection.Collection;
-//# sourceMappingURL=index.cjs.map
-
-
-/***/ }),
-
 /***/ 8572:
 /***/ ((__unused_webpack_module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -13123,6 +14102,25 @@ class Response extends Body {
 		const response = new Response(null, {status: 0, statusText: ''});
 		response[response_INTERNALS].type = 'error';
 		return response;
+	}
+
+	static json(data = undefined, init = {}) {
+		const body = JSON.stringify(data);
+
+		if (body === undefined) {
+			throw new TypeError('data is not JSON serializable');
+		}
+
+		const headers = new Headers(init && init.headers);
+
+		if (!headers.has('content-type')) {
+			headers.set('content-type', 'application/json');
+		}
+
+		return new Response(body, {
+			...init,
+			headers
+		});
 	}
 
 	get [Symbol.toStringTag]() {
