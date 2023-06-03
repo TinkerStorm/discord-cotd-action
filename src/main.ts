@@ -64,7 +64,7 @@ async function run(): Promise<void> {
       throw new Error('User does not have permission to manage this role.');
 
     const colorCode = randomHexInt();
-    const colorHex = colorCode.toString(16);
+    const colorHex = colorCode.toString(16).padStart(6, '0');
 
     const colorDataRes = await fetch(
       `https://www.thecolorapi.com/id?hex=${colorHex}`
