@@ -15,7 +15,10 @@ import { wrapDuration } from './util';
 export default class RequestHandler {
   constructor(private token: string) {}
 
-  private async request<T>(url: string, options: RequestInit = {}): Promise<T> {
+  private async request<T extends object>(
+    url: string,
+    options: RequestInit = {}
+  ): Promise<T> {
     const path = `${options.method ?? 'GET'} ${url}`;
 
     debug(`Requesting for ${path}`);
